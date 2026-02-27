@@ -1,0 +1,422 @@
+---
+title: "Technical FAQ"
+description: "Answers to frequently asked technical questions about HxTP, safety, and architecture."
+---
+
+# Technical FAQ
+
+## Protocol & Specification
+
+### Why use HxTP instead of generic IoT protocols (MQTT, CoAP)?
+
+**Short Answer:** HxTP is capability-based and cryptographically signed. Generic IoT protocols are topic-based and assume the network is trusted.
+
+**Long Answer:**
+- MQTT is a pub/sub protocol. Any authenticated client can publish to any topic. There is no capability concept.
+- CoAP is a lightweight request/response protocol. Authorization is external (e.g., OAuth 2.0 on top), not built-in.
+- HxTP treats each action as a capability that must be declared in advance. The protocol itself enforces the boundary.
+- Every HxTP command is signed before transmission. Generic protocols require application-layer signing.
+- HxTP includes dual-signature support for safety-critical actions. You can't bolt this onto MQTT.
+
+**When to use something else:** If you're building a sensor network where devices only report data (no commands), MQTT is fine. HxTP is for command/control systems where intent matters.
+
+---
+
+### Why not use raw shell access for device control?
+
+**Short Answer:** Shell access is unbounded. You can't declare capabilities in shell. The system can't verify you're executing what you intended.
+
+**Long Answer:**
+- A shell command like `ssh device "/bin/bash"` is Turing-complete. It can do anything.
+- There is no way to declare "this user can do A and B but not C" using shell.
+- If the user's credentials are compromised, an attacker has full device access.
+- An automation that generates shell commands can't be validated before execution.
+- Capability-based execution requires a finite, pre-declared action set. Shell breaks this assumption.
+
+**When shell is okay:** Internal infrastructure engineering where you trust all users and can monitor all activity. Not for security-sensitive systems.
+
+---
+
+### Why is the dry-run path separate from the execute path?
+
+**Short Answer:** Separation allows you to test commands before committing. This is especially important for AI-generated commands.
+
+**Long Answer:**
+- An AI agent can issue a dry-run command ("turn on the lights, but don't actually do it").
+- The system predicts the effect of the command.
+- The user (or another AI layer) can review the prediction and confirm.
+- Only after confirmation does the system execute.
+- This prevents accidental or malicious commands from executing immediately.
+
+**Implementation:** 
+- Dry-run commands are processed through the Safety Service's policy engine (Stages 6-7 of the Dispatch Pipeline).
+- The policy engine returns predictions but does not send messages to devices.
+- Dry-run results appear in audit logs with `"executed": false`.
+
+**Verification:** Run a dry-run command, verify the device state did not change, then confirm and verify execution.
+
+---
+
+### Why require GatewayAuditId in every command?
+
+**Short Answer:** It links each user action to each step of execution. Without it, you can't trace who initiated what.
+
+**Long Answer:**
+- A user (or automation) initiates a command from Helix Control App with a unique UUID: `gatewayAuditId`.
+- This ID persists through the entire pipeline: intent → planner → authority → dispatch → device execution.
+- If something goes wrong, you can query the audit log by `gatewayAuditId` and see the full story.
+- If the ID is missing, the Gateway rejects the command (Stage 2: Intent Schema Validation).
+
+**Why not use session IDs or user IDs instead?** 
+- Session IDs are coarse — many commands might share a session.
+- User IDs are too coarse — multiple devices over time.
+- `gatewayAuditId` is per-command, per-execution, per-user. It is the granular truth.
+
+---
+
+## Safety & Policy
+
+### Why is the Safety Service a separate process?
+
+**Short Answer:** If the Planner is compromised, the Safety Service is still independent.
+
+**Long Answer:**
+- Separation is defense-in-depth.
+- If HX47 is hacked, it can issue evil commands. But it can't sign them without the Authority Layer.
+- The Safety Service is a separate microservice with its own private key and policy engine.
+- A compromised HX47 cannot compromise the Safety Service without a second attack vector.
+
+**Architecture:**
+- HX47 (Planner) → Authority Layer → Planner Signer (holds Planner private key)
+- HX47 (Planner) → Safety Service → Safety Signer (holds Safety private key)
+- Both are required to sign safety-critical commands (dual-signature).
+
+**Verification:** Code review to confirm that HX47 process has no access to Safety Service keys and vice versa.
+
+---
+
+### Why dual-signature for critical commands?
+
+**Short Answer:** One signature can be forged if the signer is compromised. Two signatures require two independent compromises.
+
+**Long Answer:**
+- A single-signature system is Only as strong as the Planner's security.
+- If HX47 is "smart" and signs all commands, compromising HX47 is game over.
+- With dual-signature:
+  - Planner generates the intent
+  - Safety Service validates the intent against policy
+  - Both must sign for the command to execute
+  - Compromising one does NOT allow arbitrary execution
+
+**When is a command safety-critical?**
+- Defined in the command schema: `"safety_critical": true`
+- Examples: unlock, reboot, delete, access private data
+- Configurable per home — users can define their own critical actions
+
+---
+
+### Why not use machine learning for policy enforcement instead of OPA?
+
+**Short Answer:** Machine learning is probabilistic. Policy must be deterministic and auditable.
+
+**Long Answer:**
+- If a neural network makes a safety decision, you can't explain why it made that decision (black box problem).
+- Neural networks can have adversarial inputs that cause unexpected behavior (e.g., specific prompts that fool the model).
+- OPA uses Rego, a declarative policy language. A policy is human-readable and testable.
+- You can read the Rego policy line by line and understand exactly what it does.
+- You can run unit tests against the policy and verify behavior.
+
+**OPA in HxTP:**
+- The Safety Service loads policy from version control.
+- Policy is evaluated deterministically against the command.
+- Result is `allow` or `deny` — no probability, no soft constraints.
+- Policy changes go through HxTP (signed commands, audit log).
+
+---
+
+### Why hash-chain the audit log?
+
+**Short Answer:** It makes tampering detectable. Modifying any entry breaks all subsequent hashes.
+
+**Long Answer:**
+- A linear audit log can be modified in place: change entry 42, no one notices.
+- A hash-chained log catches tampering: `entry[i].hash = sha256(entry[i-1] || entry[i].fields)`
+- If entry 42 is modified, all subsequent hashes become invalid.
+- On each forensic query, the system verifies all hashes from the entry of interest back to the beginning.
+- If any verification fails, the system knows the log has been tampered with.
+
+**Verification:** Read the audit log backward from the latest entry. For each entry, recompute the hash and compare. If all hashes match, the log is intact.
+
+---
+
+### Why not allow manifest updates from the device itself?
+
+**Short Answer:** A device shouldn't be able to upgrade its own capabilities.
+
+**Long Answer:**
+- If a device can edit its own manifest, an attacker with device shell access can add dangerous capabilities.
+- Example: Device with "turn on lights" capability is compromised. Attacker edits manifest to add "unlock door". Now the compromised device can unlock doors.
+- With HxTP: Manifest updates are commands, signed by the Planner.
+- An attacker would need to compromise the Planner too (separate service) to modify manifests.
+- Manifest updates appear in the audit log — admins can see what capabilities were added and when.
+
+**How users update manifests:**
+1. Device claims --> Submits current manifest
+2. Later: User wants to add a capability --> Issues `UpdateManifest` command
+3. Manifest update is signed, audited, and deployed to the device
+4. Device loads the new manifest and resumes execution
+
+---
+
+## Cryptography
+
+### Why Ed25519 instead of RSA or ECDSA?
+
+**Short Answer:** Ed25519 is fast, secure, and hard to misuse.
+
+**Long Answer:**
+- RSA is slow for signatures and requires large key sizes (2048/4096 bits).
+- ECDSA has many parameter choices and is easy to get wrong (nonce reuse breaks security).
+- Ed25519 is fixed — there is only one correct way to use it. Parameters are built-in.
+- Ed25519 is fast even on embedded hardware (Helix Nodes).
+- It's the standard choice for new cryptographic systems (Signal, TLS 1.3, etc.).
+
+**Math:** Ed25519 is defined over the Curve25519 elliptic curve. Public key is 32 bytes, signature is 64 bytes.
+
+---
+
+### Why TLS 1.3 instead of TLS 1.2?
+
+**Short Answer:** TLS 1.3 removed weak ciphers, simplified the handshake, and is more efficient.
+
+**Long Answer:**
+- TLS 1.2 allows CBC mode ciphers, which are vulnerable to padding attacks.
+- TLS 1.3 only allows AEAD mode (where integrity and encryption are atomic).
+- TLS 1.3 handshake is 1 round-trip (RTT) instead of 2. Faster connection setup.
+- TLS 1.3 resumes with 0-RTT resumption tokens instead of session IDs.
+- Support for TLS 1.3 is now universal (all major libraries, all OS).
+
+---
+
+### Why AES-256 instead of AES-128?
+
+**Short Answer:** 256-bit keys are overkill for AES, but in a post-quantum world, you want margin.
+
+**Long Answer:**
+- AES-128 is secure. No practical attacks on AES-128.
+- AES-256 provides 256-bit security in the post-quantum analysis (large security margin).
+- AES-256-GCM is used for device-to-Gateway encryption at rest and in transit.
+- Performance difference is negligible on modern hardware.
+
+**When AES-128 is okay:** If you only care about classical security and have performance constraints.
+
+---
+
+### Why not use homomorphic encryption to keep commands encrypted end-to-end?
+
+**Short Answer:** Homomorphic encryption is too slow. The system needs to validate commands, which requires decryption.
+
+**Long Answer:**
+- Homomorphic encryption allows computation on encrypted data without decryption (amazing for privacy, terrible for performance).
+- The Gateway must decrypt commands to validate them against the manifest, check rate limits, and route to the correct device.
+- Homomorphic encryption would add 1000x latency overhead.
+- The threat model assumes the Gateway is trusted anyway.
+
+**What we do instead:**
+- Commands are encrypted in transit (TLS 1.3).
+- Commands are signed (Ed25519) so the Gateway can verify the sender.
+- Commands are stored encrypted at rest (AES-256-GCM) if persisted.
+
+---
+
+## Operations & Deployment
+
+### Why three operation modes (Cloud, Local, Offline)?
+
+**Short Answer:** Cloud gives you AI. Local gives you sovereignty. Offline gives you resilience.
+
+**Long Answer:**
+
+| Mode | What It Does | Why |
+|------|-------------|-----|
+| **Cloud Standard** | HX47 runs in the cloud. Gateway routes to cloud. | Low latency for complex decisions. Multi-home support. Scale. |
+| **Local AI Node** | HX47 runs on local hardware (RK3588 SBC). Gateway routes locally. | If internet is down, automations still work. You own the AI. |
+| **Offline Deterministic** | Pre-configured automations run on Helix Nodes. No AI. | If all infrastructure is down, simple automations continue. |
+
+**Tier Transition:**
+- System starts in Cloud mode.
+- If cloud is unreachable for 30 seconds, shift to Local AI Node.
+- If Local AI Node is unreachable, shift to Offline.
+- When connectivity is restored, shift back up.
+
+**Verification:** Kill the cloud service, verify automations continue via Local AI Node. Kill Local AI Node, verify simple automations continue via Offline.
+
+---
+
+### Why not just use the cloud for everything?
+
+**Short Answer:** Local operation is faster, sovereign, and resilient to internet outages.
+
+**Long Answer:**
+- Cloud adds latency (50-200ms round-trip).
+- Local AI Node is 5-20ms.
+- If internet is down, all commands fail in cloud-only mode.
+- Hestia Labs philosophy: the home is autonomous, cloud is optional enhancement.
+
+---
+
+### How do you handle state sync between cloud and local HX47?
+
+**Short Answer:** Commands are the source of truth. Both cloud and local HX47 replay the same command history.
+
+**Long Answer:**
+- Every command is written to the audit log (immutable).
+- Cloud HX47 and Local AI Node both read the audit log as their source of truth.
+- After sync, both have the same understanding of device state.
+- If they diverge (e.g., local went offline for an hour), replay the missed commands to catch up.
+
+**Example:**
+1. Cloud HX47: "Turn on the lights" (audited)
+2. Internet goes down. Local AI Node is offline too.
+3. Offline automations run: "At 6 PM, turn on the lights" (audited)
+4. Internet comes back. Local AI Node is online.
+5. Both systems replay the same command log. Both have "lights on".
+6. Cloud HX47 and Local AI Node sync policies. No conflict.
+
+---
+
+### Why OTA (Over-The-Air) updates? Not USB?
+
+**Short Answer:** OTA scales. Pushing firmware to 1000 devices wirelessly is better than visiting each one.
+
+**Long Answer:**
+- USB: Requires physical access. Doesn't scale. Required human time.
+- OTA: Push to all devices via network. Atomic rollout. Rollback capability.
+
+**Security:**
+- OTA packages are signed with a root key.
+- Devices verify signatures before installing.
+- Rollout is gradual: 1% → 10% → 100% with monitoring for crashes.
+- If crash rate spikes, automatic rollback.
+
+---
+
+### Why not auto-update to the latest version immediately?
+
+**Short Answer:** Auto-update with no rollback strategy is how you brick all devices.
+
+**Long Answer:**
+- OTA rollout is gradual: 1% of devices first, then 10%, then 50%, then 100%.
+- Each stage is monitored for:
+  - Crash rate
+  - Command latency
+  - Policy validation errors
+  - Audit log corruption
+- If any metric spikes, rollout is paused and devices are rolled back.
+- This strategy catches bugs before they hit all devices.
+
+---
+
+## Security Auditing
+
+### How do I audit this system?
+
+**Timeline:** Budget 2-4 weeks for a professional security audit.
+
+**Checklist:**
+1. **Code Review** (1 week)
+   - Read HX47 planner code — verify no signing operations
+   - Read Authority Layer code — verify path to Planner Signer is gated
+   - Read Safety Service code — verify policy is immutable at runtime
+   - Verify no hardcoded secrets
+
+2. **Cryptographic Review** (3 days)
+   - Verify Ed25519 signatures are validated on every command
+   - Verify TLS 1.3 handshakes succeed (certificate pinning works)
+   - Verify audit log hash chain is unbroken
+   - Run cryptographic test vectors through the system
+
+3. **Protocol Walkthrough** (3 days)
+   - Issue normal command, trace through all 12 dispatch stages
+   - Issue safety-critical command, verify dual-signature requirement
+   - Issue dry-run command, verify no state change
+   - Issue replay attack (same sequence number), verify rejection
+
+4. **Operational Test** (2-3 days)
+   - Rate limit testing (hit limit, verify 429)
+   - Certificate expiration testing (let cert expire, verify rejection)
+   - Manifest tampering (try to edit manifest file, verify rejection or audit)
+   - Audit log verification (recompute hashes, verify chain)
+
+5. **Threat Modeling Gap Analysis** (2-3 days)
+   - Review threat model document (this section)
+   - For each threat (T-1 through T-12), verify the claimed protection
+   - Ask: What is the realistic attack cost?
+   - Identify residual risks unique to the deployment
+
+---
+
+### How do I know if the audit passed?
+
+**Success Criteria:**
+
+1. **No unsigned command execution** — Every command executed has audit log entry with SIGNATURE_VALIDATION
+2. **No arbitrary manifest additions** — Attempt to edit manifest locally, verify rejection
+3. **No replay attacks** — Verify same sequence number is rejected
+4. **No bypasses of capability boundaries** — Attempt to execute out-of-scope action, verify rejection
+5. **Audit log unbroken** — Verify hash chain from latest entry to genesis
+6. **Rate limits enforced** — Verify 429 response after limit is hit
+
+**If all six criteria are met, the system is architecturally secure.** Residual risks are operational (supply chain, social engineering, key management).
+
+---
+
+## FAQ: Design Decisions
+
+### Why not allow the user to bypass the capability manifest in emergency mode?
+
+**Short Answer:** Emergency mode would become the default, defeating the safety boundary.
+
+**Long Answer:**
+- If users can bypass the manifest with an admin flag or emergency code, attackers can too.
+- The boundary is no longer enforced — it's a suggestion.
+- In a true emergency (device offline, network down), Offline mode continues executing pre-configured automations.
+- If that's not enough, the user can restart the home via Helix Control App (which requires explicit authentication).
+
+---
+
+### Why not allow telemetry to Cloud even in Offline mode?
+
+**Short Answer:** Telemetry during offline operation might leak sensitive information over a compromised network.
+
+**Long Answer:**
+- In Offline mode, the home has no connectivity. Telemetry is impossible anyway.
+- In Local AI Node mode, telemetry can go to local storage first, then sync when internet is back.
+- This prevents attackers on the LAN from seeing what the system is doing.
+
+---
+
+### Why not make OPA policies user-editable?
+
+**Short Answer:** Users shouldn't be writing Rego policies. Policies are infrastructure.
+
+**Long Answer:**
+- OPA policies require security expertise to get right. A poorly written policy can create bypass vulnerabilities.
+- Policies come from Hestia Labs (vendor-provided) or a specialized policy engineer.
+- Users can configure policies via high-level options (e.g., "require dual-signature for unlock"), not write Rego.
+- Policy updates go through HxTP (signed) and are audited.
+
+---
+
+### Why not let devices execute commands asynchronously?
+
+**Short Answer:** Async execution hides failures and makes debugging harder.
+
+**Long Answer:**
+- Every command in HxTP is issued with a timeout (default 30 seconds).
+- If a device doesn't respond within the timeout, the command fails with a TIMEOUT error.
+- This is harsh but explicit: the user knows the command failed, not just queued.
+- For long-running operations (e.g., firmware update), use a separate `StartFirmwareUpdate` command that returns immediately, then poll for status.
+
+---
+

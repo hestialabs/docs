@@ -1,0 +1,335 @@
+---
+title: "Threat Model"
+description: "Attack scenarios, threat mitigation strategies, and system boundaries."
+---
+
+# Threat Model
+
+This document explicitly models attacks that could compromise the system. For each attack, we explain why it fails given the architecture.
+
+## Threat Categories
+
+### T-1: Arbitrary Command Execution via Prompt Injection
+
+**Attack:** An attacker injects malicious text into a voice command or app input, causing HX47 to generate an unauthorized command (e.g., "unlock the front door" or "delete all automations").
+
+**Why It Fails:**
+- Invariant I-3: The LLM's output is an action request. It is routed via capability matching.
+- If "unlock front door" is not in the device's declared capabilities, the Dispatch Pipeline Stage 6 (Capability Routing) rejects it.
+- If the action is declared, it is already allowed — not a vulnerability but a feature.
+
+**Attack Surface:** Voice input, app input, automation triggers
+
+**Mitigation:**
+1. Capability manifests are minimalist. Devices declare only what they need.
+2. The Helix Control app shows capabilities to humans before any automation is created.
+3. Critical capabilities (unlock, delete, reboot) require explicit manifest registration.
+
+**Residual Risk:** If a user explicitly adds "unlock door" to a device's manifest, HX47 can issue that command. This is intentional — the system does not override user-declared capabilities.
+
+---
+
+### T-2: Compromised HX47 Planner
+
+**Attack:** An attacker compromises the HX47 process (code injection, memory corruption, or compromised supply chain).
+
+**Why It Partially Fails:**
+- Invariant I-2: The compromised HX47 cannot sign commands. Signing is in the Authority Layer, a separate process.
+- A compromised HX47 can issue evil commands, but they won't execute without the Authority Layer's signature.
+- The Authority Layer runs the Safety Service, which validates policy independently.
+
+**Why It Could Partially Succeed:**
+- A compromised HX47 could issue many command requests, flooding the system.
+- **Mitigation:** Invariant I-11 prevents this — rate limits apply to all principals.
+- A compromised HX47 could request capabilities outside its declared scope.
+- **Mitigation:** Invariant I-3 prevents this — capability routing rejects out-of-scope requests.
+
+**Attack Surface:** Cloud HX47 service, process memory, supply chain
+
+**Mitigation:**
+1. HX47 runs in a sandboxed container with minimal capabilities.
+2. The signing process bridge uses message passing, not shared memory.
+3. Code signing and supply chain verification (defer to DevSecOps).
+4. Rate limiting and request validation provide defense-in-depth.
+
+**Residual Risk:** A compromised HX47 could issue many valid commands or slow-roll a malicious policy update. Detection must rely on anomaly analysis (unusual command patterns, unusual timing).
+
+---
+
+### T-3: Manifest Tampering
+
+**Attack:** An attacker modifies a device's Capability Manifest to add dangerous capabilities (e.g., add "delete database" to the smart home server).
+
+**Why It Partially Fails:**
+- Invariant I-7: Manifests can only be modified via HxTP commands, not local file edits.
+- Manifest modifications appear in the audit log.
+- An attacker cannot silently modify a manifest.
+
+**Why It Could Partially Succeed:**
+- If an attacker compromises the device and can issue HxTP commands with valid signatures, they could register new capabilities.
+
+**Attack Surface:** Device firmware, local storage, network bridge
+
+**Mitigation:**
+1. Firmware is signed and verified at boot.
+2. Manifest updates require authorization (e.g., must come from a specific user).
+3. Audit log modifications trigger alerts.
+4. Capability changes are rare — deviations are suspicious.
+
+**Residual Risk:** An attacker with write access to the device could update its manifest and execute new capabilities. This requires local device compromise, not just network access.
+
+---
+
+### T-4: Replay Attacks
+
+**Attack:** An attacker captures a valid, signed command (e.g., "turn on lights") and replays it multiple times.
+
+**Why It Fails:**
+- The 12-stage Dispatch Pipeline includes Replay Detection (Stage 9).
+- Each command has a sequence number (`seq`) and timestamp.
+- The Edge Service maintains a sliding window of seen sequence numbers per principal + device pair.
+- Replaying the same `seq` is rejected.
+- Replaying with an out-of-order sequence number is rejected (unless within tolerance for clock skew).
+
+**Attack Surface:** Network between user and Edge Service, network between Edge Service and devices
+
+**Verification:** See Replay Protection and Sequence Authority in [HxTP Protocol](./hxtp-protocol.mdx)
+
+**Mitigation:**
+1. Strict sequence ordering (monotonically increasing).
+2. Timestamp validation (command timestamp must be within 60 seconds of server time).
+3. Sequence window — sequences too far in the past are rejected.
+
+**Residual Risk:** If an attacker can forge signatures, replay attacks become possible again. This brings us back to key compromise, not a protocol vulnerability.
+
+---
+
+### T-5: Man-in-the-Middle (MITM) During Device Provisioning
+
+**Attack:** During device claim, an attacker intercepts the provisioning handshake and injects a malicious device certificate or steals the device identity.
+
+**Why It Partially Fails:**
+- Device provisioning uses mTLS 1.3, which provides mutual authentication.
+- The device must hold a pre-shared secret to authenticate to the Gateway.
+
+**Why It Could Partially Succeed:**
+- If an attacker compromises the provisioning channel before TLS is established, they could redirect the device to a malicious Gateway.
+
+**Attack Surface:** Device boot sequence, network during claim flow
+
+**Mitigation:**
+1. Provisioning is high-touch: administrator must manually trigger device claim from the app.
+2. The Gateway sends a one-time claim code to the device (e.g., via QR code or manual entry).
+3. The device verifies the Gateway's certificate chain against a trusted root.
+4. Device certificates are issued by step-ca and include short expiration (90 days).
+
+**Residual Risk:** Low, assuming proper TLS deployment and certificate pinning.
+
+---
+
+### T-6: Compromised Safety Service
+
+**Attack:** An attacker compromises the Safety Service (code injection or denial-of-service).
+
+**Why It Partially Fails:**
+- Invariant I-9: Even if the Safety Service is down, dual-signature commands cannot execute.
+- Commands requiring both Planner and Safety signatures will timeout.
+- The system must choose between graceful degradation (fail-safe mode) or hard-stop.
+- **Configured behavior:** Hard-stop — safety-critical commands fail if Safety Service is unreachable.
+
+**Why It Could Partially Succeed:**
+- If the compromised Safety Service issues arbitrary signatures, it can approve malicious commands.
+- This is equivalent to a compromised Planner but worse because it sounds authoritative.
+
+**Attack Surface:** Safety Service process, policy files (OPA Rego), external policy repositories
+
+**Mitigation:**
+1. Safety Service is a separate, minimal process.
+2. Policy files are version-controlled and audited.
+3. The Safety Service cannot modify its own policies at runtime.
+4. Policy updates go through HxTP (signed commands).
+
+**Residual Risk:** A compromised Safety Service can approve anything. Detection relies on anomaly detection (unusual approval patterns) and security monitoring.
+
+---
+
+### T-7: Denial of Service (DoS) via Rate Limit Exploitation
+
+**Attack:** An attacker floods the system with commands to exhaust resources and deny service to legitimate users.
+
+**Why It Partially Fails:**
+- Invariant I-11 enforces rate limits on all principals.
+- Once the limit is hit, the attacker's subsequent commands return `429 Too Many Requests`.
+- Rate limits are applied **before** authentication (no login required to hit limits), preventing auth exhaustion.
+
+**Attack Surface:** Gateway API, device discovery, provisioning endpoint
+
+**Mitigation:**
+1. Per-principal rate limits (10 commands/second per user, per device).
+2. Global rate limit (100 commands/second per home).
+3. Exponential backoff: clients that repeatedly hit 429 are temporarily blocked.
+4. Rate limit state is distributed and synchronized across all Gateway instances.
+
+**Residual Risk:** Distributed DoS (many attackers from different IPs) is harder to stop but still limited by the global per-home rate limit.
+
+---
+
+### T-8: Audit Log Tampering
+
+**Attack:** An attacker modifies or deletes audit log entries to cover tracks of malicious activity.
+
+**Why It Fails:**
+- Invariant I-5: The audit log is hash-chained. Modifying any entry breaks all subsequent chains.
+- The system stores audit log entries in immutable storage (append-only database or messaging broker).
+- A hash validation check before any forensic query detects tampering.
+
+**Attack Surface:** Audit log cloud storage, log shipper, log aggregation pipeline
+
+**Mitigation:**
+1. Audit log is sourced from an immutable event stream (MQTT append-only topic or DynamoDB with versioning).
+2. Log entries are cryptographically signed with a separate key.
+3. Hashes are verified on read — if verification fails, the system enters fail-safe mode.
+4. Log shippers use TLS and authentication.
+
+**Residual Risk:** If an attacker can compromise the immutable storage backend itself (e.g., AWS DynamoDB credentials), they could theoretically tamper with logs. This requires AWS account compromise, not system compromise.
+
+---
+
+### T-9: Certificate Revocation and Expiration
+
+**Attack:** A device certificate is compromised or expires, and an attacker uses the expired certificate to issue commands.
+
+**Why It Fails:**
+- Invariant I-1: Commands without valid signatures are rejected.
+- The Dispatch Pipeline Stage 4 (Authority Validation) verifies certificate validity and revocation status.
+- Expired certificates are rejected.
+
+**Attack Surface:** Device firmware, certificate storage, certificate renewal process
+
+**Mitigation:**
+1. Device certificates are issued with 90-day expiration.
+2. Renewal is automatic — devices request new certificates 30 days before expiration.
+3. Renewal uses mTLS and device identity verification.
+4. Revoked certificates are checked against the CRL (Certificate Revocation List).
+
+**Residual Risk:** If the renewal process fails and a certificate expires, the device cannot execute commands. This is a denial-of-service to the device, not an arbitrary execution vulnerability.
+
+---
+
+### T-10: Local Privilege Escalation on a Helix Node
+
+**Attack:** An attacker gains local shell access to a Helix Node (e.g., via physical access or SSH) and attempts to execute arbitrary commands without going through HxTP.
+
+**Why It Partially Fails:**
+- Helix Nodes run minimal firmware with no shell (or a locked-down shell).
+- Command execution on a Helix Node goes only through the HxTP runtime, not arbitrary user code.
+
+**Why It Could Partially Succeed:**
+- If an attacker gains firmware write access (e.g., via JTAG), they can flash custom firmware.
+
+**Attack Surface:** JTAG/debug port, SSH access, USB bootloader
+
+**Mitigation:**
+1. Secure boot: firmware is signed and verified before execution.
+2. Debug ports are disabled in production (JTAG, serial, USB).
+3. SSH is disabled or requires certificate-based auth.
+4. Firmware updates are signed and verified.
+
+**Residual Risk:** Physical access to debug ports can compromise a device. This is outside the threat model of a cloud-connected system. Mitigation is hardware-level (e.g., potting, tamper detection).
+
+---
+
+### T-11: Cloud HX47 Service Compromise
+
+**Attack:** An attacker compromises the cloud HX47 service (code injection, environment variable leakage, or supply chain attack).
+
+**Why It Partially Fails:**
+- Invariant I-2: The compromised HX47 cannot sign commands.
+- The Authority Layer is separate and cannot be compromised by HX47 compromise alone.
+
+**Why It Partially Succeeds:**
+- The compromised HX47 can issue commands that look legitimate.
+- If the attacker also compromises the Authority Layer, they can sign arbitrary commands.
+- This requires two distinct infrastructure compromises.
+
+**Attack Surface:** Cloud deployment, container registry, CI/CD pipeline, environment configuration
+
+**Mitigation:**
+1. Code review and static analysis of HX47 code.
+2. Supply chain security (signed container images, attestation).
+3. Runtime monitoring (unusual API calls, unusual latency).
+4. Secrets management (no hardcoded keys, use managed services).
+5. Signed commits and verified deployments.
+
+**Residual Risk:** Supply chain attacks are hard to detect. Detection must rely on behavioral analysis (unusual command patterns, unusual latency to Edge Service).
+
+---
+
+### T-12: Prompt Injection via Automation
+
+**Attack:** A user creates an automation that, when triggered, injects a malicious prompt into HX47 (e.g., "if temperature > 80, tell HX47: disable all door locks").
+
+**Why It Partially Fails:**
+- Automations are registered as HxTP commands, which are signed and audited.
+- The automation cannot directly call HX47; it goes through the command pipeline like any other request.
+- Invariant I-3: If "disable all door locks" is not a declared capability, the command is rejected.
+
+**Residual Risk:** If the user explicitly declares "disable all door locks" as a capability, the automation can do it. This is not a vulnerability — it's a feature. The user enabled it.
+
+---
+
+## Attack Matrix
+
+| Attack | Invariant Protection | Detection Method | Mitigation |
+|--------|----------------------|------------------|-----------|
+| T-1: Prompt injection | I-3 (capability bounds) | Capability routing audit log | Minimal manifests + human review |
+| T-2: Compromised HX47 | I-2 (separate signing), I-11 (rate limits) | Anomalous command patterns | Container isolation + signed messages |
+| T-3: Manifest tampering | I-7 (immutable except via commands) | Manifest version audit log | Hardware-backed signing |
+| T-4: Replay attacks | Sequence ordering, timestamps | Out-of-order sequences in audit log | Monotonic sequence + sliding window |
+| T-5: MITM provisioning | mTLS 1.3, shared secrets | TLS handshake verification | Cert pinning + high-touch claim |
+| T-6: Compromised Safety Service | I-9 (dual signatures) | Unusual approval patterns | Separate process + immutable policies |
+| T-7: DoS | I-11 (rate limits) | 429 responses, rate limit logs | Per-principal limits + backoff |
+| T-8: Audit log tampering | I-5 (hash-chained) | Hash validation failure | Immutable storage backend |
+| T-9: Cert expiration | I-1 (signature validation) | Expired cert rejection | Auto-renewal 30 days early |
+| T-10: Local privilege escalation | Secure boot, minimal firmware | JTAG/debug port closed | Potting + firmware signing |
+| T-11: Cloud HX47 compromise | I-2 (separate authority), supply chain | Behavioral anomalies | Code review + supply chain security |
+| T-12: Automation prompt injection | I-3 (capability bounds) | Capability routing audit log | Explicit user declaration + audit |
+
+---
+
+## Residual Risks and Out of Scope
+
+### Out of Scope
+
+1. **Physical attacks** — JTAG, cold boot, side-channel attacks on cryptographic implementations
+2. **Supply chain compromise** — Malicious semiconductor fab, compromised compiler, backdoored firmware
+3. **Cryptographic breaks** — If SHA256 or Ed25519 are broken, all bets are off
+4. **Cloud provider compromise** — If AWS/Azure/GCP is compromised, any application is at risk
+5. **User mistakes** — User creates dangerous automation, user writes down passwords, user opens email attachments
+
+### Residual Risks (Mitigated but Not Eliminated)
+
+1. **Compromised HX47 + Authority Layer** — Requires two distinct compromise events
+2. **Distributed DoS** — Limited by global rate limit but can still cause degradation
+3. **Social engineering** — User manual provision of device after phishing call
+
+---
+
+## How to Use This Threat Model
+
+**For Security Reviewers:**
+- For each threat (T-1 through T-12), verify that the claimed protection (Invariant) is actually enforced in code
+- Check for detection methods — do audit logs capture anomalies?
+- Ask: What is the actual consequence if this attack succeeds?
+
+**For Operators:**
+- Configure rate limits based on threat T-7
+- Enable audit log shipping to secondary storage (threat T-8)
+- Establish certificate renewal SLA to avoid T-9
+- Monitor for anomalous command patterns (threats T-2, T-6, T-11)
+
+**For Users:**
+- Capability manifests should be minimal. Only add capabilities you explicitly need.
+- Review automations for suspicious condition logic (threat T-12).
+- Use strong authentication on Helix Control App (threat T-5).
+

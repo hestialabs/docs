@@ -1,0 +1,199 @@
+---
+title: "Quick Reference"
+description: "Error codes, safety classifications, and key constants"
+---
+
+# Quick Reference
+
+## HxTP Error Codes
+
+All error codes returned by the dispatch pipeline and execution endpoints.
+
+| Code | Name | Cause | Retriable | Logged As |
+|---|---|---|---|---|
+| `1000` | `ERR_VERSION_MISMATCH` | Envelope schema version not supported | No | `version_mismatch` |
+| `1001` | `ERR_SIGNATURE_INVALID` | Planner/Safety signature verification failed | No | `signature_verification_failed` |
+| `1002` | `ERR_NONCE_REPLAY` | Nonce has been used before | No | `nonce_replay_detected` ⚠ |
+| `1003` | `ERR_SEQUENCE_INVALID` | Sequence number out of expected range | No | `sequence_invalid` |
+| `1004` | `ERR_CAPABILITY_UNKNOWN` | Capability not in device's registered set | No | `capability_unknown` |
+| `1005` | `ERR_ACTION_UNKNOWN` | Action not in capability's action enum | No | `action_unknown` |
+| `1006` | `ERR_POLICY_DENIED` | OPA policy evaluation returned deny | No | `policy_denied` |
+| `1007` | `ERR_RATE_LIMITED` | Request exceeds rate limit | Yes\* | `rate_limit_exceeded` |
+| `1008` | `ERR_CONFIRMATION_REQUIRED` | Action requires user confirmation | Yes\* | `confirmation_required` |
+| `1009` | `ERR_EXECUTION_TIMEOUT` | Device callback exceeded max time (100ms) | Yes\* | `execution_timeout` |
+| `1010` | `ERR_EXECUTION_FAILED` | Device reported execution failure | Depends | `execution_failed` |
+| `1011` | `ERR_SAFETY_SIGNATURE_REQUIRED` | Safety countersignature missing for critical action | No | `safety_signature_missing` ⚠ |
+
+\* Retriable means: can be retried after a brief delay in subsequent user requests.  
+⚠ Security event — automatically escalates to security team if repeated.
+
+## Safety Classifications
+
+Every action belongs to one safety class, which determines validation gates and signatures required.
+
+| Class | Requirements | Confirmation Gate | Safety Signature Required | Dry-Run Supported |
+|---|---|---|---|---|
+| **normal** | Read, light control, non-destructive operations | No | No | N/A |
+| **sensitive** | Write operations, form submission, process spawn | Yes (30s default) | No | Optional |
+| **critical** | Delete, deploy, security actuators, credential access | Yes (60s default) | **Yes** | Recommended |
+| **restricted** | Raw shell, network config, credential mutation | **Human-authorized only** | **Yes** | Optional |
+
+**Status of `restricted`:** Specified for future digital execution domain. Not currently used in physical domain.
+
+## Rate Limit Defaults
+
+Default rate limits enforced by Safety policy bundle. Customizable per tenant.
+
+| Category | Limit | Window |
+|---|---|---|
+| Device-wide (any action) | 60 commands | 1 minute |
+| Critical-class action | 5 commands | 1 hour |
+| Sensitive-class action | 20 commands | 1 minute |
+| Restricted-class action | 2 commands | 1 session |
+| Per-device, per-action | 10 commands | 5 minutes |
+
+## Certificate Lifetimes
+
+| Certificate Type | Default Lifetime | Renewal Window | Revocation Method |
+|---|---|---|---|
+| Device (Helix Node) | 48 hours | 50% of lifetime (24h) | CRL |
+| Edge Service | 1 year | 90 days | CRL |
+| Safety Proxy | 1 year | 90 days | CRL |
+| Tenant Intermediate CA | 3 years | N/A (not renewed) | Root revocation |
+| Root CA | 10 years | N/A (offline) | N/A |
+
+## Timeout Values
+
+| Operation | Default Timeout | Configurable |
+|---|---|---|
+| Safety Service countersignature | 5 seconds | Per deployment |
+| Device execution callback | 100ms | Per action |
+| Command dispatch response | 30 seconds | Per device |
+| Confirmation TTL (sensitive) | 30 seconds | Per tenant |
+| Confirmation TTL (critical) | 60 seconds | Per tenant |
+| MQTT message delivery | 10 seconds | Per device |
+| mTLS handshake | 10 seconds | Per connection |
+
+## Nonce and Sequence
+
+| Parameter | Size | Format | Scope |
+|---|---|---|---|
+| **Nonce** | 128 bits | Hex string (32 chars) | Per device session |
+| **Sequence** | 32-bit integer | Decimal | Per device session |
+| **Session Duration** | Variable | Until device disconnect | Device-scoped |
+| **Nonce Reuse Window** | 5 minutes | After mark-consumed | For replay protection |
+
+## Device Capability Manifest
+
+Required fields in tool manifest (hxtp-js SDK):
+
+```json
+{
+  "name": "@namespace/tool-name",
+  "version": "1.0.0",
+  "sdk_version": ">=1.0.0",
+  "capabilities": ["capability_name"],
+  "actions": {
+    "action_name": {
+      "description": "Human-readable description",
+      "params": { ...JSON Schema... },
+      "safety_class": "normal|sensitive|critical",
+      "idempotent": true/false,
+      "supports_dry_run": true/false
+    }
+  }
+}
+```
+
+## Audit Log Entry Format
+
+Every command execution produces an audit log entry.
+
+```json
+{
+  "row_id": 987654,
+  "row_hash": "<SHA256 hex>",
+  "prev_hash": "<SHA256 hex of previous row>",
+  "event_type": "command_executed|command_rejected|etc",
+  "intent_id": "<UUID>",
+  "device_id": "<device_id>",
+  "action": "<action_name>",
+  "capability": "<capability_name>",
+  "issuer_id": "<planner_key_id>",
+  "timestamp": "2026-02-27T14:35:08Z",
+  "result": "SUCCESS|ERR_*",
+  "user_id": "<tenant_id>",
+  "validation_gates": {
+    "version_check": "PASS|FAIL",
+    "planner_signature": "PASS|FAIL",
+    "safety_signature": "PASS|FAIL|N/A",
+    "nonce_validation": "PASS|FAIL",
+    "sequence_validation": "PASS|FAIL",
+    "capability_whitelist": "PASS|FAIL",
+    "rate_limit": "PASS|FAIL"
+  }
+}
+```
+
+## HxTP Envelope Field Sizes
+
+| Field | Max Size | Type | Notes |
+|---|---|---|---|
+| `schema_version` | 4 bytes | Integer | Single-digit (1-9) |
+| `intent_id` | 36 bytes | UUID string | Standard RFC4122 |
+| `issuer_id` | 64 bytes | String | Planner key identifier |
+| `target_id` | 64 bytes | String | Device or agent ID |
+| `capability` | 64 bytes | String | Capability name |
+| `action` | 64 bytes | String | Action name |
+| `params` | 4 KB | Object | JSON formatted |
+| `nonce` | 32 bytes | Hex string | 128-bit hex |
+| `sequence` | 4 bytes | Integer | Monotonic per session |
+| `timestamp` | 24 bytes | ISO8601 | UTC timezone |
+| `planner_signature` | 128 bytes | Hex string | Ed25519 (64 bytes hex) |
+| `safety_signature` | 128 bytes | Hex string | Ed25519 (64 bytes hex) |
+| **Total Envelope** | ~6 KB | Combined | Maximum typical packet |
+
+## Policy Bundle Config Keys
+
+Standard keys in OPA Rego policy bundles (editable per tenant).
+
+| Key | Type | Example | Purpose |
+|---|---|---|---|
+| `device_rate_limit` | object | `{"device_01": {"limit": 10, "window_sec": 60}}` | Per-device rate limits |
+| `action_rate_limit` | object | `{"lock_door": {"limit": 5, "window_sec": 3600}}` | Per-action rate limits |
+| `access_grants` | object | `{"user_001": {"devices": ["light_01"], "until": "2026-12-31T23:59:59Z"}}` | User access control |
+| `time_restrictions` | array | `[{"action": "lock_door", "denied_hours": [2,3,4], "allow_override": true}]` | Time-based denials |
+| `offline_authorized_actions` | array | `["turn_on", "turn_off", "set_brightness"]` | Allowed offline |
+| `critical_action_confirm` | boolean | `true` | Require user confirmation for critical |
+
+## Planned Features Status
+
+| Feature | Status | Earliest Target | Notes |
+|---|---|---|---|
+| Behavioral Anomaly Detection | Planned | v2 | Statistical baseline comparison |
+| Digital Execution Domain (HX100) | Planned | v3 | Process, filesystem, API capabilities |
+| Specialist Agent SDK | Planned | v3 | Third-party agent development |
+| Multi-LLM Backend | Planned | v3 | Support multiple model providers |
+| HSM Integration | Planned | v3/Production | Safety key storage |
+| Formal Security Audit | Planned | v3 | Third-party audit before production |
+| Post-Quantum Crypto | Planned | v4+ | Lattice-based signatures (Dilithium) |
+| WoT Thing Description | Specified | v2 | Web of Things compatibility |
+| State Sync Conflict Resolution | Specified | v2 | Event sourcing + idempotency |
+| High-Security Actuator Tier | Planned | v2 | ATECC608B secure element support |
+
+## Command Latency SLA by Mode
+
+| Mode | p50 | p95 | p99 | Condition |
+|---|---|---|---|---|
+| Cloud Standard | 800ms | 1.5s | 2s | LLM inference dominant |
+| Cloud Standard (cached) | 200ms | 400ms | 600ms | Deterministic path only |
+| Local AI Node | 7s | 12s | 15s | Local 7-8B LLM |
+| Offline (preconfig) | 50ms | 100ms | 200ms | Deterministic automation |
+
+---
+
+## Next Steps
+
+- See [Error Handling](/operations/failure-modes) for detailed error responses
+- Review [Safety Enforcement](/architecture/safety-enforcement) for classification details
+- Explore [Certificate Lifecycle](/security/cryptographic-model#certificate-lifecycle) for PKI timelines

@@ -1,97 +1,118 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Hestia Labs"
 ---
 
-## Setting up
+# Introduction
 
-Get your documentation site up and running in minutes.
+Hestia Labs is a capability-based, cryptographically signed execution platform for autonomous home automation. The architecture enforces structural separation between **intelligence** (LLM planner), **authority** (signing and policy), and **execution** (connected devices).
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
+The system operates locally over LAN without cloud dependency. Cloud services enhance but do not enable.
 
-## Make it yours
+## Core Architecture Principles
 
-Design a docs site that looks great and empowers your users.
+1. **Capability-Based Execution** — Every device declares what it can do. Commands request capabilities, never raw operations. The LLM cannot see actions that aren't declared.
 
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
-  </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
-  </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
-  </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
-  </Card>
-</Columns>
+2. **Cryptographic Authority** — All execution is cryptographically signed. Dual signatures (Planner + Safety Service) gate safety-critical actions. No unsigned commands execute.
 
-## Create beautiful pages
+3. **Deterministic Safety** — The Safety Service is a separate trust domain with its own signing key. Policy evaluation is deterministic (OPA Rego). No probabilistic systems can veto a valid action.
 
-Everything you need to create world-class documentation.
+4. **Structural Separation** — Intelligence, authority, and execution are **architecturally separated** by process boundaries, signing keys, and validation gates. Not logical. Not policy-based. Architectural.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+5. **Local Sovereignty** — The system works offline. Pre-configured automations continue during cloud outages. Tier transitions are automatic (Cloud → Local AI Node → Offline Deterministic).
 
-## Need inspiration?
+6. **Immutable Auditability** — Every command is logged to a hash-chained append-only audit log. Tamper detection is cryptographically provable.
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+## The Central Question
+
+After reading this documentation, you should answer with certainty:
+
+> **Can this AI system execute arbitrary commands outside its declared capability envelope?**
+
+The answer must be defensible: **No**. If not, the architecture is incomplete or misunderstood.
+
+## Documentation Structure
+
+This specification is organized by **domain and trust boundary**, not by use case. It follows the principle-to-implementation flow:
+
+| Tab | Contains |
+|---|---|
+| **Foundations** | System introduction, quick start |
+| **Architecture** | System design, authority flows, capability model, safety enforcement |
+| **Protocol** | Wire format (HxTP), validation pipeline, message structure |
+| **Security** | Cryptography, trust boundaries, invariants, threat analysis |
+| **Operations** | Execution modes, failure handling, walkthroughs, roadmap |
+| **Reference** | Error codes, FAQ, constants, lookups |
+
+## Reading Paths for Different Audiences
+
+### Security Auditor: Verify the System Cannot Be Bypassed
+
+1. [Architectural Invariants](./security/invariants) — 12 non-negotiable rules with enforcement mechanisms
+2. [Threat Model](./security/threat-model) — 12 attack scenarios with mitigation proof
+3. [Trust Boundaries](./security/trust-boundaries) — Where trust is placed, how it's earned
+4. [Authority Chain](./architecture/authority-chain) — How commands must flow to be valid
+5. [Cryptographic Model](./security/cryptographic-model) — Key hierarchy, signing, verification
+
+### Backend/Cloud Engineer: Implement Against This Protocol
+
+1. [Architecture Overview](./architecture/overview) — System composition and ecosystem
+2. [HxTP Protocol](./protocol/hxtp-protocol) — Message format, transport, envelope structure
+3. [Dispatch Pipeline](./protocol/dispatch-pipeline) — 12-stage validation at Edge Service
+4. [Capability Manifest](./architecture/capability-manifest) — Device registry and action schema
+5. [Practical Walkthroughs](./operations/walkthroughs) — Step-by-step command flows
+6. [Quick Reference](./reference/quick-reference) — Error codes, rate limits, timeouts
+
+### Embedded Engineer: Build Helix Nodes
+
+1. [Architecture Overview](./architecture/overview) — Understand the context first
+2. [Cryptographic Model](./security/cryptographic-model) — Key storage, signature verification, certificate renewal
+3. [Dispatch Pipeline](./protocol/dispatch-pipeline) — What the Edge Service sends, what nodes must validate
+4. [Capability Manifest](./architecture/capability-manifest) — How to declare device capabilities
+5. [Failure Modes](./operations/failure-modes) — 14 failure categories and recovery procedures
+6. [Practical Walkthroughs](./operations/walkthroughs) — See node provisioning, manifest update, command execution flows
+
+### Infrastructure Architect: Design the Cloud Service
+
+1. [Architecture Overview](./architecture/overview) — System lifecycle and tier model
+2. [Authority Chain](./architecture/authority-chain) — How HX47 Planner, Safety Service, Edge Service interact
+3. [Execution Modes](./operations/execution-modes) — Cloud Standard, Local AI Node, Offline Deterministic tiers
+4. [Failure Modes](./operations/failure-modes) — Cloud outage scenarios and recovery
+5. [Cryptographic Model](./security/cryptographic-model) — Key management, certificate provisioning, rotation
+6. [Practical Walkthroughs](./operations/walkthroughs) — Multi-step orchestration examples
+
+### AI/LLM Engineer: Integrate HX47 Planner
+
+1. [Architecture Overview](./architecture/overview) — What the Planner can and cannot do
+2. [Authority Chain](./architecture/authority-chain) — Planner domain and boundaries
+3. [Capability Manifest](./architecture/capability-manifest) — Action enum and schema the Planner receives
+4. [Safety Enforcement](./architecture/safety-enforcement) — OPA policies that gate actions
+5. [Technical FAQ](./reference/faq) — Why certain design decisions exist
+
+## Document Status
+
+All documents are marked with implementation status:
+
+- **Specified** — Fully defined, architecturally complete, ready for engineering and security review
+- **Planned — Not Implemented** — Forward vision for v2/v3, not yet fully specified
+
+Treat **Specified** as the source of truth. Treat **Planned** as directional only.
+
+## Quick Navigation
+
+**System Boundaries**  
+[Authority Chain](./architecture/authority-chain) · [Trust Boundaries](./security/trust-boundaries) · [Invariants](./security/invariants)
+
+**Protocol & Validation**  
+[HxTP Protocol](./protocol/hxtp-protocol) · [Dispatch Pipeline](./protocol/dispatch-pipeline)
+
+**Security**  
+[Threat Model](./security/threat-model) · [Cryptography](./security/cryptographic-model)
+
+**Reference**  
+[FAQ](./reference/faq) · [Quick Reference](./reference/quick-reference)
+
+---
+
+**Last Updated:** February 2026  
+**Audience:** Embedded engineers, backend engineers, security reviewers, infrastructure architects  
+**Assumption:** Reader has background in cryptography, protocol design, or system architecture

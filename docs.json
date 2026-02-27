@@ -1,7 +1,6 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "theme": "luma",
+  "name": "Hestia Labs Documentation",
   "colors": {
     "primary": "#16A34A",
     "light": "#07C983",
@@ -11,58 +10,100 @@
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Foundations",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "",
             "pages": [
-              "index",
-              "quickstart",
-              "development"
-            ]
-          },
-          {
-            "group": "Customization",
-            "pages": [
-              "essentials/settings",
-              "essentials/navigation"
-            ]
-          },
-          {
-            "group": "Writing content",
-            "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
-            ]
-          },
-          {
-            "group": "AI tools",
-            "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "index"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "Architecture",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "System Design",
             "pages": [
-              "api-reference/introduction"
+              "architecture/overview",
+              "architecture/authority-chain",
+              "architecture/capability-manifest",
+              "architecture/safety-enforcement"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Protocol",
+        "groups": [
+          {
+            "group": "HxTP Specification",
+            "pages": [
+              "protocol/hxtp-protocol",
+              "protocol/dispatch-pipeline"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Security",
+        "groups": [
+          {
+            "group": "Cryptography & Keys",
+            "pages": [
+              "security/cryptographic-model"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Trust & Authority",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "security/trust-boundaries",
+              "security/invariants"
+            ]
+          },
+          {
+            "group": "Threat Analysis",
+            "pages": [
+              "security/threat-model"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Operations",
+        "groups": [
+          {
+            "group": "Execution",
+            "pages": [
+              "operations/execution-modes",
+              "operations/failure-modes"
+            ]
+          },
+          {
+            "group": "Implementation",
+            "pages": [
+              "operations/walkthroughs",
+              "roadmap/overview"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "API Reference",
+            "pages": [
+              "api-reference/overview",
+              "api-reference/errors"
+            ]
+          },
+          {
+            "group": "Reference & FAQ",
+            "pages": [
+              "reference/quick-reference",
+              "reference/faq"
             ]
           }
         ]
@@ -71,14 +112,8 @@
     "global": {
       "anchors": [
         {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
+          "anchor": "GitHub",
+          "href": "https://github.com/hestialabs"
         }
       ]
     }
@@ -90,33 +125,14 @@
   "navbar": {
     "links": [
       {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
+        "label": "GitHub",
+        "href": "https://github.com/hestialabs"
       }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
+    ]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+      "github": "https://github.com/hestialabs"
     }
   }
 }

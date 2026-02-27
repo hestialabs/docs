@@ -1,0 +1,311 @@
+---
+title: "HxTP Protocol"
+description: "Hestia Execution Transfer Protocol - capability-based signed execution"
+---
+
+# HxTP Protocol
+
+**Status: Specified (structure defined), Not Implemented (canonical specification artifact pending)**
+
+HxTP (Hestia Execution Transfer Protocol) is a capability-based, cryptographically signed execution protocol. It governs how intelligence issues verified actions to physical and digital systems.
+
+## Design Properties
+
+- **Capability-Based:** Devices and agents expose a declared capability set. Commands reference capabilities, not arbitrary operations.
+- **Intent-Signed:** Every execution intent carries a cryptographic signature from the issuing authority (Planner).
+- **Countersigned:** Safety-critical intents require a second signature from the Safety service before devices will accept them.
+- **Replay-Protected:** Every intent includes a nonce and sequence context. Replayed intents are rejected.
+- **Versioned:** Envelope format carries a schema version. Version mismatches produce defined errors, not undefined behavior.
+
+## Transport Layer
+
+### Command/Control Path
+
+**Protocol:** HxTP over TCP with mTLS (TLS 1.3, mutual authentication)  
+**Port:** 8883 (IANA registered for MQTT, reused for HxTP)  
+**Delivery Guarantee:** Delivery-confirmed (TCP)  
+**Payload Encoding:** Binary (compact encoding) or JSON (human-readable, slower)  
+**Use Case:** Signed execution intents, command dispatch
+
+**Properties:**
+- Initiator: Edge Service / Cloud HX47
+- Receiver: Helix Nodes, Digital Agents (HX100)
+- Latency: Under 100ms p99 on LAN
+- Reliability: Required (acknowledgment on dispatch)
+
+### Telemetry Path
+
+**Protocol:** MQTT over TLS (port 8883)  
+**QoS:** 1 (at-least-once delivery)  
+**Topics:** Device state updates, sensor telemetry  
+**Payload Encoding:** JSON  
+**Use Case:** Device state publication, sensor data
+
+**Properties:**
+- Initiator: Helix Nodes, Sensors
+- Receiver: MQTT Broker (EMQX or HiveMQ)
+- Latency: Sub-second
+- Reliability: Optional (loss-tolerant for telemetry)
+
+**Note:** MQTT is a required decision. Telemetry uses lossy message transport (acceptable for sensor data). Commands use reliable transport (unacceptable to lose critical actions).
+
+### Inter-Service Communication (Cloud)
+
+**Protocol:** mTLS between all cloud services  
+**Endpoints:** HX47 ↔ Safety Service, Safety Service ↔ Edge Service, Edge Service ↔ Audit Log  
+**Authentication:** Mutual TLS with short-lived certificates  
+**Use Case:** Cross-service orchestration
+
+### Intra-AI-Node Communication
+
+**Protocol:** Direct typed function calls (Pydantic-validated)  
+**Language:** Python (hxtp-py)  
+**Mechanism:** No network protocol for same-host module communication  
+**Use Case:** Planner → Deterministic Engine → Safety Service (local)
+
+## Envelope Structure
+
+**Status: Specified (layout defined as pending hxtp-spec.md production)**
+
+The HxTP intent envelope is the core data structure carrying all execution information. It contains at minimum:
+
+### Intent Envelope Fields
+
+| Field | Type | Description |
+|---|---|---|
+| `schema_version` | Integer | Protocol version. Incompatible versions produce `ERR_VERSION_MISMATCH`. |
+| `intent_id` | UUID | Unique per intent. Used for deduplication and audit. |
+| `issuer_id` | String | Identity of the signing authority (Planner key ID). |
+| `target_id` | String | Device or agent identifier. Must match a registered capability holder. |
+| `capability` | String | Capability name from the target's registered capability set. |
+| `action` | String | Action name. Must be a member of the capability's registered action enum. |
+| `params` | Object | Action parameters. Validated against the tool schema for this action. |
+| `nonce` | String (hex) | Cryptographically random 128-bit value. Single-use. |
+| `sequence` | Integer | Monotonic sequence number per device session. |
+| `timestamp` | ISO 8601 | Issuer timestamp. Used for staleness detection, not as primary replay protection. |
+| `planner_signature` | String (hex) | Ed25519 signature over canonical envelope bytes by Planner key. |
+| `safety_signature` | String (hex) | Ed25519 countersignature by Safety service key. Required for sensitive/critical actions. |
+
+### Canonical Serialization
+
+For signature computation, the envelope is serialized to a canonical form:
+```
+canon = encode({
+  "schema_version": <int>,
+  "intent_id": "<uuid>",
+  "issuer_id": "<string>",
+  "target_id": "<string>",
+  "capability": "<string>",
+  "action": "<string>",
+  "params": <object>,
+  "nonce": "<hex>",
+  "sequence": <int>,
+  "timestamp": "<ISO8601>"
+})
+```
+
+The signature is computed over this canonical bytes string using Ed25519. All whitespace, field ordering, and encoding must be deterministic.
+
+## Error Codes
+
+**Status: Specified (taxonomy defined), Numeric namespace pending hxtp-spec.md**
+
+| Code | Meaning | Retriable |
+|---|---|---|
+| `ERR_VERSION_MISMATCH` | Envelope schema version not supported by receiver. | No |
+| `ERR_SIGNATURE_INVALID` | Planner or Safety signature verification failed. | No |
+| `ERR_NONCE_REPLAY` | Nonce has been seen before. Intent rejected. | No |
+| `ERR_SEQUENCE_INVALID` | Sequence number out of expected range. | No |
+| `ERR_CAPABILITY_UNKNOWN` | Requested capability not in device's registered set. | No |
+| `ERR_ACTION_UNKNOWN` | Action not in capability's registered action enum. | No |
+| `ERR_POLICY_DENIED` | OPA policy evaluation returned deny. | No |
+| `ERR_RATE_LIMITED` | Request exceeds rate limit for this device/action. | Yes (after cooldown) |
+| `ERR_CONFIRMATION_REQUIRED` | Action requires user confirmation before dispatch. | Yes (if confirmation provided) |
+| `ERR_EXECUTION_TIMEOUT` | Device callback did not complete within maximum execution time (100ms). | Yes (if idempotent) |
+| `ERR_EXECUTION_FAILED` | Device reported execution failure (hardware fault, sensor offline, etc.). | Depends (context-specific) |
+| `ERR_SAFETY_SIGNATURE_REQUIRED` | Safety countersignature absent for critical action. | No |
+
+## Connection Lifecycle
+
+### Device to Edge Service
+
+```
+1. Device performs mTLS handshake with Edge Service
+   ├── Device presents its tenant-specific cert
+   ├── Edge Service verifies device certificate
+   └── Secure channel established
+
+2. Device generates session nonce
+   ├── Device -> Edge Service: registrations nonce
+   └── Edge Service: stores nonce, associated with device identity
+
+3. Device is ready to receive commands
+   └── Edge Service: can now forward intents targeting this device
+
+4. Command arrives at Edge Service
+   └── Edge Service: validates intent against stored nonce, forwards
+
+5. Device executes and reports result
+   └── Device -> Edge Service: execution result
+
+6. Device/Edge session continues until timeout or device disconnect
+   ├── Existing nonce remains valid for remaining session
+   └── Device generates new nonce on reconnect
+```
+
+## Message Flow Examples
+
+### Example 1: Normal Action (Light Control)
+
+```json
+{
+  "schema_version": 1,
+  "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+  "issuer_id": "planner-key-prod-001",
+  "target_id": "living_room_light",
+  "capability": "switch",
+  "action": "turn_on",
+  "params": {},
+  "nonce": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+  "sequence": 42,
+  "timestamp": "2026-02-27T14:30:00Z",
+  "planner_signature": "ed25519_sig_here",
+  "safety_signature": null
+}
+```
+
+Response from device:
+```json
+{
+  "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "SUCCESS",
+  "result": {
+    "state": "on",
+    "timestamp": "2026-02-27T14:30:01Z"
+  }
+}
+```
+
+### Example 2: Critical Action (Lock with Dry-Run)
+
+```json
+{
+  "schema_version": 1,
+  "intent_id": "660e8400-e29b-41d4-a716-446655440001",
+  "issuer_id": "planner-key-prod-001",
+  "target_id": "front_door_lock",
+  "capability": "security_lock",
+  "action": "lock",
+  "params": {
+    "force": false,
+    "dry_run": true
+  },
+  "nonce": "b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5",
+  "sequence": 43,
+  "timestamp": "2026-02-27T14:35:00Z",
+  "planner_signature": "ed25519_sig_here",
+  "safety_signature": "ed25519_safety_sig_here"
+}
+```
+
+Phase 1 Response (Dry-Run):
+```json
+{
+  "intent_id": "660e8400-e29b-41d4-a716-446655440001",
+  "phase": "dry_run",
+  "status": "DRY_RUN_SUCCESS",
+  "projected_changes": {
+    "door_state": "locked",
+    "battery_level": "95%"
+  }
+}
+```
+
+User confirms dry-run result. Phase 2 intent sent with `dry_run: false`:
+
+```json
+{
+  "schema_version": 1,
+  "intent_id": "660e8400-e29b-41d4-a716-446655440002",
+  "issuer_id": "planner-key-prod-001",
+  "target_id": "front_door_lock",
+  "capability": "security_lock",
+  "action": "lock",
+  "params": {
+    "force": false,
+    "dry_run": false
+  },
+  "nonce": "c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6",
+  "sequence": 44,
+  "timestamp": "2026-02-27T14:35:05Z",
+  "planner_signature": "ed25519_sig_here",
+  "safety_signature": "ed25519_safety_sig_here"
+}
+```
+
+Live execution response:
+```json
+{
+  "intent_id": "660e8400-e29b-41d4-a716-446655440002",
+  "phase": "execution",
+  "status": "SUCCESS",
+  "result": {
+    "door_state": "locked",
+    "battery_level": "95%",
+    "locked_at": "2026-02-27T14:35:06Z"
+  }
+}
+```
+
+## Schema Versioning Strategy
+
+The schema version field enables forward and backward compatibility:
+
+| Scenario | Behavior |
+|---|---|
+| Receiver doesn't support version | `ERR_VERSION_MISMATCH`, reject intent |
+| Receiver supports version | Process normally |
+| Future protocol extends schema | New version number, old devices reject cleanly |
+| Firmware update adds new fields | Version bump signals update, old devices must upgrade |
+
+The schema version is **not** semantic versioning. It is a simple integer that increments when the envelope structure changes in incompatible ways.
+
+## Formal Specification Status
+
+The canonical HxTP specification (hxtp-spec.md) will formalize:
+- Binary encoding (if used)
+- JSON encoding (if used)
+- Exact canonical serialization rules
+- Numeric error code assignments
+- Timing and retry semantics
+- Certificate chain validation
+- OTA package format
+
+This document describes the conceptual model. The formal specification will be the authoritative implementation guide.
+
+## Navigation
+
+**Breadcrumb:** Protocol → HxTP Protocol  
+**Status:** Specified ✓
+
+### Related Topics
+
+- [Dispatch Pipeline](/protocol/dispatch-pipeline) — 12-stage validation of signed intents
+- [Authority Chain](/architecture/authority-chain) — Intent flow from Planner to execution
+- [Cryptographic Model](/security/cryptographic-model) — Signature algorithms, key hierarchy
+- [Capability Manifest](/architecture/capability-manifest) — Actions in the per-request enum
+- [Quick Reference](/reference/quick-reference) — Error codes, safety classes, timeouts
+
+### Build Against This Specification
+
+If you are implementing:
+- **Cloud service:** Read Design Properties, Intent Envelope Structure
+- **Device firmware:** Read Envelope Structure, Signature Verification, Transport Layer
+- **Edge Service:** Read entire document, especially Envelope, Errors, Transport
+
+### Next Topics
+
+- **How this protocol is validated:** [Dispatch Pipeline](/protocol/dispatch-pipeline)
+- **How this integrates with HxTP Authority:** [Authority Chain](/architecture/authority-chain)
+- **How messages are signed:** [Cryptographic Model](/security/cryptographic-model)
+- **Full workflow example:** [Practical Walkthroughs](/operations/walkthroughs) (Walkthrough 3)

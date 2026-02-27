@@ -1,0 +1,317 @@
+---
+title: "Trust Boundaries and Invariants"
+description: "Non-negotiable architectural boundaries and system invariants"
+---
+
+# Trust Boundaries and Invariants
+
+The Hestia Labs architecture is built on non-negotiable invariants. These are not guidelines or best practices. Violating any of them constitutes an architectural failure, not an implementation bug.
+
+## The Ten Architectural Invariants
+
+### I-1: The LLM Never Constructs Execution Payloads
+
+The LLM selects from registered, enumerated tools. It does not:
+- Construct command strings
+- Build action names
+- Generate device IDs
+- Create parameters that are not validated
+- Produce any execution artifact
+
+These are constructed by the deterministic engine from the LLM's **structured tool selection input**. The LLM output is:
+- Parsed as JSON
+- Validated against the tool schema
+- Cross-checked against the capability registry
+- Translated into an HxTP intent envelope by the deterministic engine
+
+**Enforcement:** The deterministic engine validates all LLM output before any downstream processing. Invalid JSON discards the output. Unknown actions discard the output. Schema violations discard the output. Discarded outputs are logged.
+
+**Why:** If the LLM can construct execution payloads, it can invent actions, forge device IDs, and bypass safety gates.
+
+---
+
+### I-2: The LLM Never Signs
+
+Cryptographic signing occurs only in the HxTP signing authority layer, after all validation gates have passed. The signing function is:
+- Not accessible to LLM loader
+- Not imported by any code path the LLM output flows through
+- Only callable by the Planner component legitimately
+- Guarded by deterministic engine checks
+
+**Enforcement:** Signing keys are not available at LLM runtime. The signing function is in a separate, access-controlled module.
+
+**Why:** If the LLM can sign intents, it can sign arbitrary commands without going through Safety evaluation or confirmation gates.
+
+---
+
+### I-3: No Command Executes Without Safety Policy Evaluation
+
+Every command, regardless of source (LLM, automation, TinyML, manual), passes through the Safety policy engine before execution. There is:
+- No fast path
+- No emergency override that bypasses policy
+- No "admin mode" that skips the Safety layer
+- No direct device control that doesn't go through Edge Service
+
+**Enforcement:** HxTP Edge Service enforces this. Intents not countersigned (for sensitive/critical) are rejected. The dispatch pipeline enforces all gates in sequence.
+
+**Why:** If sophisticated safety policies can be bypassed, the system becomes an unreliable arm of the LLM.
+
+---
+
+### I-4: No Command Executes Without Signature Verification at the Execution Endpoint
+
+Execution endpoints (Helix Nodes, digital agents) verify:
+- Planner signature (Ed25519)
+- Safety countersignature (for sensitive/critical actions)
+
+before executing any action. Unsigned commands are:
+- Rejected at the device level
+- Not executed
+- Logged as security events
+- Never silently accepted
+
+**Enforcement:** Firmware (hxtp-micro) includes Ed25519 signature verification. No action callback is invoked without valid signature.
+
+**Why:** If devices accept unsigned commands, a compromised or spoofed Edge Service can execute arbitrary actions.
+
+---
+
+### I-5: Capabilities Are Declared, Not Discovered or Inferred
+
+The capability registry is the only authoritative source of what a device can do. The LLM cannot:
+- Infer capabilities from device name or metadata
+- Guess capability names
+- Construct new actions
+- Expand a device's capability set
+- Discover undeclared capabilities
+
+A device cannot receive a command for a capability it has not registered, **regardless of what the LLM proposes**.
+
+**Enforcement:** Capability whitelist check in the dispatch pipeline. An action not in the registry for a target device is rejected with `ERR_CAPABILITY_UNKNOWN` or `ERR_ACTION_UNKNOWN`.
+
+**Why:** If devices can be commanded to do undeclared things, the safety model collapses.
+
+---
+
+### I-6: Authority Cannot Be Delegated Upward
+
+A spawned agent or component cannot hold or acquire broader authority than the component that spawned it. Authority flows downward only.
+
+Examples of violations:
+- ✗ A Specialist agent executing an action the Planner is not authorized to execute
+- ✗ A plugin accessing the signing key
+- ✗ An offline Safety proxy signing for actions not in the offline-authorized whitelist
+- ✗ A device receiving capability updates without versioned re-registration
+
+**Enforcement:** At spawn time, the spawner explicitly lists the authority boundaries for the spawned agent. Runtime boundary violation is caught at the Edge Service layer.
+
+**Why:** If authority can flow upward, a compromised subordinate can acquire the parent's authority.
+
+---
+
+### I-7: The Safety Service and Planner Are Separate Trust Domains
+
+They must not:
+- Share signing keys
+- Share secrets
+- Run in the same process
+- Use the same deployment model
+- Share infrastructure in ways that allow one compromise to cascade to the other
+
+In production, the Safety service signing key is protected by:
+- HSM (Hardware Security Module), or
+- Dedicated encrypted vault with separate key management
+
+**Enforcement:** Separate microservice deployment. Distinct key management. Audit logging of all Safety service operations.
+
+**Why:** If the Safety service is compromised, the entire execution model is compromised. Separation limits blast radius.
+
+---
+
+### I-8: Audit Log Entries Are Immutable
+
+No process may:
+- Modify audit log entries
+- Delete audit log entries
+- Suppress audit log writes
+
+The hash chain must be verifiable at any time. A broken chain is a security event.
+
+**Enforcement:** Append-only Postgres table with hash chaining. SELECT-only access for application code. DBA-level access to audit logs is tracked separately.
+
+**Why:** If audit logs can be tampered with, the system is unauditable. Forensic investigation becomes impossible.
+
+---
+
+### I-9: Plugin Code Cannot Modify SDK Enforcement Logic
+
+Tool plugins execute within the SDK's enforcement context. A plugin cannot:
+- Override capability validation
+- Bypass the Safety gate
+- Access signing keys
+- Modify the policy engine
+- Escalate its authority
+
+**Enforcement:** Plugin code runs in a sandboxed context. SDK core is off-limits to plugins. Capability registration is the only SDK interface plugins interact with.
+
+**Why:** If plugins can modify enforcement logic, malicious plugins can undermine the entire safety model.
+
+---
+
+### I-10: Offline Mode Does Not Bypass Authority
+
+In offline mode, the local Safety proxy enforces policy from its cached bundle. Offline mode does not grant expanded authority. If anything, offline mode has **reduced authority** — the offline-authorized whitelist excludes critical-class actions.
+
+Examples:
+- ✓ Pre-configured automations work offline (deterministic logic, no LLM)
+- ✓ High-confidence HK-47 commands work offline (within whitelist)
+- ✗ Critical actions (lock, alarm, deploy) are not authorized offline
+- ✗ Unknown actions are not authorized offline
+
+**Enforcement:** Offline-authorized whitelist is distinct from full capability set. Safety proxy evaluates against this whitelist specifically.
+
+**Why:** If offline mode grants broader authority, cloud outages become a security vulnerability.
+
+---
+
+## Trust Boundaries
+
+Trust boundaries define what may cross between security domains and what remains protected.
+
+### Boundary 1: LLM Output → Deterministic Engine
+
+**What crosses:**
+- Structured JSON tool call (proposed action, parameters)
+
+**What does not cross:**
+- Signing authority
+- Execution rights
+- Policy decisions
+- Device IDs (only those in context)
+
+**Enforcement:**
+The deterministic engine validates all LLM output against the tool schema before any downstream processing. Validation failure discards the output. Invalid JSON, unknown actions, and schema violations all result in output discard.
+
+**Threat Model:**
+- Malicious LLM produces invalid JSON → Caught at parsing
+- LLM hallucinates action names → Caught at enum check
+- LLM modifies parameters → Caught at schema validation
+
+---
+
+### Boundary 2: Deterministic Engine → Safety Service
+
+**What crosses:**
+- Validated, Planner-signed intent requesting countersignature
+- Full context (device ID, action, params, safety_class)
+
+**What does not cross:**
+- Raw LLM output
+- Unvalidated parameters
+- Schema-violating actions
+- LLM reasoning or explanations
+
+**Enforcement:**
+The Safety service receives only Planner-signed intents. It does not receive LLM output directly. It cannot be tricked into evaluating invalid input.
+
+**Threat Model:**
+- Injection attacks via invalid parameters → Filtered before reaching Safety
+- Crafted intents → Must be Planner-signed; invalid signatures rejected
+- Replay attacks → Nonce validation at Edge Service
+
+---
+
+### Boundary 3: Safety Service → Edge Service
+
+**What crosses:**
+- Doubly-signed (Planner + Safety) execution intent
+
+**What does not cross:**
+- Unsigned intents
+- Policy evaluation rationale
+- LLM reasoning
+- Safety service state
+
+**Enforcement:**
+The Edge Service verifies both signatures. An intent missing either signature (for actions requiring both) is rejected before any further processing.
+
+**Threat Model:**
+- Unsigned intents → Signature verification fails
+- Modified intents → Signature verification fails (canonical bytes changed)
+- Counterfeit signatures → Ed25519 verification fails
+
+---
+
+### Boundary 4: Edge Service → Execution Endpoint
+
+**What crosses:**
+- Doubly-signed execution intent over mTLS
+
+**What does not cross:**
+- Unsigned messages
+- Commands from any other source
+- Unencrypted secrets
+- Policy bundles (only signed ones)
+
+**Enforcement:**
+Execution endpoints maintain an allowlist of authorized senders (the Edge Service's certificate). Commands arriving from any other source are rejected. Signature verification is performed on the endpoint itself.
+
+**Threat Model:**
+- Network attacker forging commands → Unsigned, fails device verification
+- Compromised Edge Service → Can only forward valid signed intents; cannot forge new ones
+- Rogue wireless command → Not from authorized sender; rejected by device
+
+---
+
+### Boundary 5: Plugin Code → SDK Core
+
+**What crosses:**
+- Tool declarations
+- Parameter values
+- Action handler results
+
+**What does not cross:**
+- Signing keys
+- Policy engine access
+- Capability registry write access (except through versioned registration)
+- Safety service interface
+
+**Enforcement:**
+Plugin code runs in the SDK's execution context. The signing function and policy engine are not importable from plugin code. Capability mutation goes through the registration interface, not direct table writes.
+
+**Threat Model:**
+- Malicious plugin tries to access signing key → Key not exported to plugin scope
+- Plugin tries to bypass Safety gate → Interface not available to plugins
+- Plugin modifies capability directly → Not permissible; must re-register
+
+---
+
+### Boundary 6: Cloud → Local Cluster
+
+**What crosses:**
+- Policy bundles (signed)
+- OTA packages (signed)
+- HX47 orchestration intents (signed)
+- State sync (encrypted)
+
+**What does not cross:**
+- Plaintext credentials
+- Unsigned updates
+- Unencrypted state
+- Arbitrary code
+
+**Enforcement:**
+mTLS for all cloud-to-local communication. All inbound packages verified against signing key before application. CRL/revocation token checks on critical updates.
+
+**Threat Model:**
+- MITM attack → mTLS prevents eavesdropping and modification
+- Unsigned firmware update → Signature verification fails; rollback triggered
+- Compromised cloud endpoint → Local cluster validates signatures independently
+
+---
+
+## Next Steps
+
+- Explore [Authority Chain](/architecture/authority-chain) for how these invariants are enforced in the execution flow
+- See [Safety Enforcement](/architecture/safety-enforcement) for how Safety policies respect these boundaries
+- Review [Cryptographic Model](/security/cryptographic-model) for the cryptographic mechanisms that enforce these boundaries

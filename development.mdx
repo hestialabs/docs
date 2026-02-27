@@ -1,94 +1,200 @@
 ---
-title: 'Development'
-description: 'Preview changes locally to update your docs'
+title: "Local Development"
+description: "Building and extending Hestia Labs documentation"
 ---
 
-<Info>
-  **Prerequisites**:
-  - Node.js version 19 or higher
-  - A docs repository with a `docs.json` file
-</Info>
+# Local Development
 
-Follow these steps to install and run Mintlify on your operating system.
+This documentation is a static site built with Mintlify. You can build and preview it locally during development.
 
-<Steps>
-<Step title="Install the Mintlify CLI">
+## Prerequisites
+
+- Node.js 18+ installed
+- npm or yarn package manager
+- Git (to clone the repository)
+
+## Setup
+
+### 1. Install Mintlify CLI
 
 ```bash
 npm i -g mint
 ```
-</Step>
 
-<Step title="Preview locally">
+Verify installation:
 
-Navigate to your docs directory where your `docs.json` file is located, and run the following command:
+```bash
+mint --version
+```
+
+### 2. Clone the Repository
+
+```bash
+git clone https://github.com/hestialabs/docs.git
+cd docs
+```
+
+### 3. Start Local Preview
+
+From the project root:
 
 ```bash
 mint dev
 ```
 
-A local preview of your documentation will be available at `http://localhost:3000`.
+The documentation will be available at `http://localhost:3000` by default.
 
-</Step>
-</Steps>
+## Making Changes
 
-## Custom ports
+### Adding New Pages
 
-By default, Mintlify uses port 3000. You can customize the port Mintlify runs on by using the `--port` flag. For example, to run Mintlify on port 3333, use this command:
+1. Create a new `.mdx` file in the appropriate directory
+2. Add frontmatter with `title` and `description`
+3. Write content in Markdown with MDX extensions
+4. Update `docs.json` navigation to include the new page
 
-```bash
-mint dev --port 3333
-```
-
-If you attempt to run Mintlify on a port that's already in use, it will use the next available port:
-
-```md
-Port 3000 is already in use. Trying 3001 instead.
-```
-
-## Mintlify versions
-
-Please note that each CLI release is associated with a specific version of Mintlify. If your local preview does not align with the production version, please update the CLI:
+Example:
 
 ```bash
-npm mint update
+touch security/new-page.mdx
 ```
 
-## Validating links
+Update `docs.json`:
 
-The CLI can assist with validating links in your documentation. To identify any broken links, use the following command:
+```json
+{
+  "group": "Security & Trust",
+  "pages": [
+    "security/invariants",
+    "security/new-page"
+  ]
+}
+```
+
+### Editing Existing Pages
+
+Edit the `.mdx` file. Changes are hot-reloaded (page refreshes automatically).
+
+### Using Markdown Features
+
+- **Headings:** `# Heading 1`, `## Heading 2`, etc.
+- **Code blocks:** Use backticks with language specifier
+- **Tables:** Standard Markdown table syntax
+- **Links:** `[text](./path/to/file)` or `[text](https://external.com)`
+- **Bold/Italic:** `**bold**`, `*italic*`
+- **Lists:** `- bullet` or `1. numbered`
+
+### Adding Mermaid Diagrams
+
+Use mermaid code blocks:
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'fontSize': '14px'}}}%%
+sequenceDiagram
+    participant A as Alice
+    participant B as Bob
+    A->>B: Hello Bob!
+    B->>A: Hi Alice!
+```
+
+## Validating Links
+
+Check for broken links:
 
 ```bash
 mint broken-links
 ```
 
-## Deployment
+This will identify any internal or external links that are broken.
 
-If the deployment is successful, you should see the following:
+## Building for Production
 
-<Frame>
-  <img src="/images/checks-passed.png" alt="Screenshot of a deployment confirmation message that says All checks have passed." style={{ borderRadius: '0.5rem' }} />
-</Frame>
+To generate the static site for deployment:
 
-## Code formatting
+```bash
+mint build
+```
 
-We suggest using extensions on your IDE to recognize and format MDX. If you're a VSCode user, consider the [MDX VSCode extension](https://marketplace.visualstudio.com/items?itemName=unifiedjs.vscode-mdx) for syntax highlighting, and [Prettier](https://marketplace.visualstudio.com/items?itemName=esbenp.prettier-vscode) for code formatting.
+Output is in the `.mintlify/` directory.
 
 ## Troubleshooting
 
-<AccordionGroup>
-  <Accordion title='Error: Could not load the "sharp" module using the darwin-arm64 runtime'>
+### Port Already in Use
 
-    This may be due to an outdated version of node. Try the following:
-    1. Remove the currently-installed version of the CLI: `npm remove -g mint`
-    2. Upgrade to Node v19 or higher.
-    3. Reinstall the CLI: `npm i -g mint`
-  </Accordion>
+Use a different port:
 
-  <Accordion title="Issue: Encountering an unknown error">
-  
-    Solution: Go to the root of your device and delete the `~/.mintlify` folder. Then run `mint dev` again.
-  </Accordion>
-</AccordionGroup>
+```bash
+mint dev --port 3333
+```
 
-Curious about what changed in the latest CLI version? Check out the [CLI changelog](https://www.npmjs.com/package/mintlify?activeTab=versions).
+### Changes Not Showing
+
+1. Ensure all `.mdx` files have valid frontmatter (title, description)
+2. Check that `docs.json` is valid JSON
+3. Restart the dev server: `Ctrl+C`, then `mint dev`
+
+### Clear Cache Issues
+
+```bash
+rm -rf ~/.mintlify
+mint dev
+```
+
+### "Sharp" Module Error
+
+If you see "Could not load the 'sharp' module":
+
+1. Remove the CLI: `npm remove -g mint`
+2. Upgrade to Node v19 or higher
+3. Reinstall the CLI: `npm i -g mint`
+
+## Project Structure
+
+```
+docs/
+├── docs.json              # Navigation and configuration
+├── index.mdx              # Homepage
+├── architecture/          # System design documentation
+├── protocol/              # Protocol specifications
+├── operations/            # Operations and deployment guides
+├── security/              # Security model and threat analysis
+├── reference/             # API reference, FAQ, technical lookup
+└── images/                # Diagrams and embedded images
+```
+
+## Style Guidelines
+
+This documentation follows Hestia Labs standards:
+
+- **Active voice:** "The system validates..." not "Validation is performed..."
+- **Second person:** "You can configure..." not "One can configure..."
+- **Direct tone:** No marketing language, no buzzwords
+- **Technical precision:** Define terms on first use, maintain consistent terminology
+- **Minimal decoration:** No emojis, no line art, no unnecessary formatting
+
+See [AGENTS.md](./AGENTS.md) for the complete style guide.
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b docs/add-new-section`
+3. Make your changes
+4. Test locally: `mint dev`
+5. Check links: `mint broken-links`
+6. Commit: `git commit -m "docs: add new section on X"`
+7. Push and open a Pull Request
+
+## IDE Setup
+
+For **VS Code**:
+
+- Install the [MDX VSCode extension](https://marketplace.visualstudio.com/items?itemName=unifiedjs.vscode-mdx) for syntax highlighting
+- Install [Prettier](https://marketplace.visualstudio.com/items?itemName=esbenp.prettier-vscode) for automatic formatting
+
+Configure Prettier to format on save for cleaner diffs.
+
+## Questions?
+
+- Review existing `.mdx` files for examples
+- Check the [docs.json](./docs.json) structure for navigation patterns
+- Refer to [Markdown Essentials](./essentials/markdown.mdx) for formatting reference

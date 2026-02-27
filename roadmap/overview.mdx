@@ -1,0 +1,342 @@
+---
+title: "Implementation Roadmap"
+description: "v1, v2, v3 build phases and maturity evolution"
+---
+
+# Implementation Roadmap
+
+**Status: Specified**
+
+Hestia Labs follows a phased approach to build the full platform, with clear success criteria for each phase.
+
+## v1: Functional Core (0–9 months)
+
+**Target:** Single home, cloud HX47 required, all cryptographic foundations established.
+
+**Principle:** Get a single, fully secure, fully auditable end-to-end execution working. Prove the model.
+
+### Deliverables
+
+**Firmware & Hardware**
+- Helix Node firmware (hxtp-micro SDK)
+- mTLS client implementation
+- Ed25519 identity per device
+- MQTT telemetry client
+- HxTP binary command reception
+- Nonce validation
+- Signature verification
+- OTA update handler with rollback
+
+**Edge Service**
+- HxTP Edge Service on Primary Compute Node (Raspberry Pi CM4 or N100 mini-PC)
+- Deterministic validation engine
+- Replay protection (nonce registry)
+- Rate limiting
+- Dry-run coordination
+- mTLS server for devices
+- Command dispatch to devices
+
+**Cloud & Intelligence**
+- Cloud HX47 with LLM (external API initially, e.g., OpenAI API acceptable)
+- Planner logic
+- Tool schema construction
+- Safety Service with OPA policy engine
+- Policy bundles (Rego)
+- Safety countersignature generation
+- Basic tool set (5 or fewer tools: light, thermostat, plug, lock, sensor)
+
+**Security & PKI**
+- step-ca for device certificate issuance (local instance)
+- Root CA offline
+- Tenant intermediate CAs
+- Device certificate lifecycle (24-72 hour renewal)
+- Planner and Safety signing keys (Ed25519)
+
+**Provisioning**
+- QR-based device claiming
+- Single-use, time-limited provisioning tokens
+- Physical proximity verification (must be on same LAN)
+- Tenant binding
+
+**OTA System**
+- Signed firmware manifests (Hestia Labs vendor key)
+- Binary delta updates (minimal bandwidth)
+- Dual-partition scheme on ESP32-S3
+- Staged rollout: canary (1%), expanded (10%), full
+- Automatic halt on >2% failure rate
+- Rollback on health check failure
+
+**Audit & Logging**
+- Hash-chained append-only audit log
+- Postgres backend
+- All command events logged
+- Tamper detection (hash verification)
+
+**User Interface**
+- Helix Control App (web-based MVP)
+- Device list and status
+- Manual command with confirmation UI
+- Audit log viewer (read-only)
+
+**Observability**
+- Fleet dashboard (operator view)
+- Firmware version distribution
+- Certificate expiry tracking
+- OTA progress monitoring
+- MQTT broker status
+- Safety service availability
+
+### Success Criteria
+
+- **Latency:** Voice command to device execution within 2 seconds on cloud path, under 200ms for preconfig offline
+- **Reliability:** 99.5% uptime of Edge Service on LAN
+- **Resilience:** Devices continue executing pre-configured automations during cloud outage
+- **Security:** All commands cryptographically signed; no unsigned command executes
+- **Auditability:** Every command logged and hash-chained; tamper-detectable
+- **Deployability:** A single home setup working end-to-end (one tenant, 5-10 devices)
+
+### Testing Criteria
+
+- Firmware unit tests (100% of critical paths)
+- Integration tests (device ↔ Edge Service)
+- Protocol conformance tests (hxtp-spec compliance)
+- Security tests (signature verification, nonce validation, replay protection)
+- OTA rollout simulation (canary → full)
+- Offline operation (cloud down, automations continue)
+
+---
+
+## v2: Sovereignty and Local Intelligence (9–18 months)
+
+**Target:** Local AI Node operational, multi-home support, full safety enforcement.
+
+**Principle:** Enable local intelligence so the system does not depend on cloud for reasoning. Support multiple homes from a single infrastructure instance.
+
+### Deliverables
+
+**Local Intelligence**
+- Local HX47 on RK3588 SBC
+- Whisper STT (speech-to-text)
+- Piper TTS (text-to-speech)  
+- Local LLM (Qwen2.5-7B or Qwen3-8B @ Q4_K_M using llama.cpp or RKNN)
+- Local Planner (same logic as cloud, validated offline)
+- Memory management (24-72h window)
+
+**Embodied Interface**
+- HK-47 with on-device TinyML
+- Wake word detection (low-power, always-on)
+- Intent classifier (device name + action intent)
+- Slot extractor (entity extraction for parameters)
+- Confidence-threshold routing (high conf → offline, low → cloud STT)
+- Per-device acoustic calibration at provisioning
+
+**Safety & Policy**
+- Local Safety Proxy with OPA engine
+- Cached policy bundles (1-4h TTL)
+- Time-sensitive policy push mechanism (cloud invalidates on critical changes)
+- Offline-authorized capability whitelist (non-critical actions only)
+
+**Multi-Tenant Support**
+- Per-home database schema (Postgres)
+- Schema migration agent
+- Tenant isolation (row-level security)
+- Per-tenant intermediate CA
+- Per-tenant policy bundles
+
+**State Management**
+- Event sourcing for state reconstruction
+- Idempotency keys for command deduplication
+- Conflict resolution (last-write-wins per field)
+- State sync on cloud reconnection
+
+**TinyML & OTA**
+- TinyML model versioning (separate from firmware version)
+- TinyML OTA delivery mechanism
+- Model compatibility checks
+
+**Memory Architecture**
+- Behavior pattern storage (Postgres)
+- Override history tracking
+- Episodic memory with decay function
+- Reflection engine (scheduled job, deterministic scoring)
+- Memory injection (token-bounded)
+
+### Success Criteria
+
+- **Latency:** Voice command to device execution in under 1.5s on local AI path
+- **Offline Operation:** Full operation without cloud for preconfig automations and high-confidence commands
+- **Multi-Home:** 10+ homes on single deployment without performance degradation
+- **Resilience:** Fabric handles cloud loss, local node failure independently
+- **Security:** Local Safety Proxy enforces same policies as cloud
+- **Privacy:** No telemetry to third parties; all data Hestia-operated
+
+### Testing Criteria
+
+- Local HX47 unit tests (LLM inference, tool selection)
+- HK-47 acoustic tests (false wake-up rate under 0.1 per hour)
+- Safety Proxy policy evaluation tests (offline vs. cloud consistency)
+- Multi-tenant isolation tests
+- Offline operation tests (7+ day duration)
+- State sync tests (conflict scenarios, ordering)
+
+---
+
+## v3: Scale and Protocol Publication (18–36 months)
+
+**Target:** Thousands of homes, HxTP public specification, open-core ecosystem.
+
+**Principle:** Open the protocol for third-party implementation. Publish formal specification. Achieve production scale.
+
+### Deliverables
+
+**Protocol & Specification**
+- hxtp-spec.md v1.0 published (canonical, formal specification)
+- Reference implementation in Rust (open source)
+- Conformance test suite (third-party implementations must pass)
+
+**Digital Execution Domain**
+- HX100 Desktop Agent (software Helix Node)
+- Filesystem capabilities (read, write, delete with safety classes)
+- Process execution (spawn, kill with constraints)
+- Browser automation (navigate, fill forms, submit)
+- API consumption (registered endpoints, error handling)
+- Shell execution (named templates only, no raw shell to LLM)
+
+**Execution Safety**
+- Named tools for shell, avoiding raw command construction
+- Dry-run for critical filesystem/process operations
+- Behavioral anomaly detection on command sequences
+
+**Deployment & Operations**
+- Distributed cloud HX47 (horizontal scaling)
+- HSM integration for Safety service signing key (`[Planned — Not Implemented]`)
+- Behavioral anomaly detection (`[Planned — Not Implemented]`)
+- Third-party device certification program
+
+**Ecosystem**
+- Third-party tool marketplace (tools from partners integrate via hxtp-js SDK)
+- Device certification tiers (standard, high-security with secure element)
+- Specialist agent SDK for partners to build custom agents
+- Multi-LLM backend support (swap models without schema changes)
+
+### Success Criteria
+
+- **Production Scale:** 1,000 homes in production, 10,000+ devices managed
+- **Third-Party Integration:** Third-party manufacturer integrates HxTP without Hestia Labs engineering
+- **Ecosystem:** 5+ third-party tools/integrations published
+- **Standards:** HxTP adopted by 3+ independent implementations
+- **Resilience:** 99.95% uptime SLA for cloud services
+
+### Testing Criteria
+
+- Conformance test suite pass rate 100% for v1 spec
+- Reference implementation (Rust) passes all conformance tests
+- Third-party implementations pass conformance
+- Scale testing (10,000 devices, OTA rollout, cloud load)
+- Digital execution sandboxing verification
+- Behavioral anomaly detection accuracy >95%
+
+---
+
+## Maturity Phase (3+ years)
+
+Beyond v3, the platform evolves toward:
+
+**Governance**
+- HxTP governance model (foundation or working group)
+- Steering committee (Hestia Labs + community members)
+- RFC process for protocol extensions
+- Security audit program (annual third-party audits)
+
+**Advanced Intelligence**
+- Multi-agent cognitive execution (Planner + Specialists + task graph + simulation)
+- Simulation engine for high-risk plans
+- Formal verification of critical policies
+- HX47 API for third-party Specialist agent developers (sandboxed, authority-bounded)
+
+**Hardware Evolution**
+- Hardware certification tiers (bronze, silver, gold)
+- Secure element (ATECC608B) in high-security devices
+- Custom silicon for encrypted key storage (long-term)
+- Standardized device form factors
+
+**Platform Maturity**
+- 10,000+ homes
+- 100,000+ devices
+- Multi-LLM support (Claude, Gemini, custom-trained models)
+- Regional deployment (EU, Asia privacy compliance)
+- Enterprise SLA tiers
+
+---
+
+## Dependency Chain
+
+```
+v1 Crypto Foundations
+  ├─ Signing (Ed25519)
+  ├─ Transport (mTLS)
+  ├─ PKI (step-ca)
+  └─ Audit (hash chain)
+       ↓
+v1 Execution Model
+  ├─ Planner → Safety → Dispatch
+  ├─ Nonce-based replay protection
+  ├─ Signature verification
+  └─ Command execution
+       ↓
+v2 Local Intelligence
+  ├─ Local HX47 (requires Planner logic from v1)
+  ├─ Local Safety Proxy (requires OPA from v1)
+  ├─ Offline automations (requires execution model from v1)
+  └─ Event sourcing (requires audit foundation from v1)
+       ↓
+v3 Digital Domain
+  ├─ HX100 agent (requires execution model from v1 + v2)
+  ├─ Filesystem/Process capabilities (requires confinement model)
+  ├─ Specialist agents (requires multi-agent from v2)
+  └─ Public spec (requires v1 + v2 proven stable)
+```
+
+---
+
+## Success Metrics by Phase
+
+### v1 Success = Proven Concept
+- Single home works end-to-end
+- Security model validated in code
+- Offline resilience demonstrated
+- Protocol is internally consistent
+
+### v2 Success = Production Ready
+- Multi-home concurrent operation
+- Cloud-independent reasoning (local HX47)
+- Cloud loss gracefully handled
+- Privacy properties validated (no third-party telemetry)
+
+### v3 Success = Ecosystem Launched
+- Third-party implementations available
+- Thousands of homes operational
+- Vendor diversity (devices from multiple manufacturers)
+- Open governance established
+
+---
+
+## Long-Term Vision
+
+Hestia Labs aspires to be the infrastructure layer for home automation that:
+
+- **Respects user agency** — Users control their own intelligence and data
+- **Enforces safety** — Deterministic policy layer prevents unintended actions
+- **Enables innovation** — Open protocol allows third-party extensions
+- **Scales sustainably** — Supports thousands of homes without degradation
+- **Interoperates** — Compatible with existing home ecosystems (Matter, Thread, etc.)
+
+The end goal is not to own the ecosystem, but to provide the common capability layer that allows ecosystems to flourish.
+
+---
+
+## Next Steps
+
+- See [Architecture Overview](/architecture/overview) for current state
+- Explore [v1 Deliverables](/roadmap/overview#v1-functional-core) in detail
+- Learn [SDK Ecosystem](/sdks/overview) for how third parties will integrate

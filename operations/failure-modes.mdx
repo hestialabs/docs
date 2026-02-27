@@ -1,0 +1,545 @@
+---
+title: "Failure Modes and Recovery"
+description: "How the system detects and recovers from component failures and attacks"
+---
+
+# Failure Modes and Recovery
+
+**Status: Specified**
+
+The system is designed to fail safely. Every failure mode has a defined response strategy.
+
+## LLM Failures
+
+### LLM Produces Invalid JSON
+
+**Detection:** JSON parser in deterministic engine fails  
+**Symptoms:** Parsing exception before schema validation  
+**Response:**
+1. Discard output
+2. Log event with full LLM response (for debugging)
+3. Notify user: "I didn't understand that. Could you rephrase?"
+4. Do NOT retry on identical input
+
+**Recovery:**
+- User rephrases request
+- LLM tries again
+- If persistent across 3 attempts in 1 hour, log as potential issue for fine-tuning evaluation
+
+**Audit Log:**
+```
+event_type: "llm_invalid_json"
+attempt: 1
+error: "Unexpected token '}' at position 42"
+user_request_id: "<request_id>"
+timestamp: "<ISO8601>"
+```
+
+---
+
+### LLM Proposes Unknown Action
+
+**Detection:** Action enum check — proposed action not in per-request enum  
+**Symptoms:** Action name not found in tool schema  
+**Response:**
+1. Discard output
+2. Log event
+3. Notify user with suggestion: "I don't know how to do that. Available actions: turn_on, turn_off, set_brightness"
+4. Do NOT execute
+
+**Recovery:**
+- User rephrases with correct action
+- LLM tries again
+- If pattern detected (same invalid action 5+ times), flag for LoRA retraining
+
+**Audit Log:**
+```
+event_type: "llm_unknown_action"
+proposed_action: "brighten_enormously"
+available_actions: ["turn_on", "turn_off", "set_brightness"]
+device_id: "kitchen_light"
+user_request_id: "<request_id>"
+timestamp: "<ISO8601>"
+```
+
+---
+
+### LLM Outputs Valid JSON with Invalid Schema
+
+**Detection:** Schema validation in deterministic engine fails (Pydantic validation)  
+**Symptoms:** Type mismatch, missing required field, extra fields  
+**Response:**
+1. Discard output
+2. Log event with schema validation error
+3. Notify user: "Something went wrong. Please try again."
+4. Do NOT retry automatically
+
+**Recovery:**
+- Automatic retry is disabled (prevents infinite loops)
+- User must reissue request
+- After 5 schema validation errors in 1 hour, alert operator
+
+**Audit Log:**
+```
+event_type: "llm_schema_validation_failure"
+schema_error: "ValidationError: value_is_not_a_valid_integer for field 'brightness'"
+user_request_id: "<request_id>"
+timestamp: "<ISO8601>"
+```
+
+---
+
+## Safety Service Failures
+
+### Safety Service Unavailable
+
+**Detection:** Timeout on Safety countersignature request (default: 5s)  
+**Symptoms:** Cloud connection down, Safety service crashed, network latency spike  
+**Response:**
+
+**For Cloud Safety Service:**
+1. Fail closed — Command is NOT executed
+2. Incident logged to operations dashboard
+3. User notified: "Authorization service unavailable. Try again in a moment."
+4. Automatic retry with exponential backoff (5s, 10s, 20s, 40s max)
+
+**For Local Safety Proxy (offline mode):**
+1. Serve from cached policy bundle if within TTL
+2. If TTL expired, fail closed on all commands until proxy reconnects
+3. Alert operator immediately if bundle stale
+4. Attempt cloud reconnect
+
+**Recovery:**
+- Cloud: Safety service is restarted, pending intents retry
+- Local: Bundle refreshed from cloud, commands resume
+- Timeout after 24 hours: Device flagged as unable to authorize commands
+
+**Audit Log:**
+```
+event_type: "safety_service_unavailable"
+intent_id: "<intent_id>"
+device_id: "<target_id>"
+timeout_seconds: 5
+last_successful_check: "2026-02-27T12:35:00Z"
+retry_attempt: 1
+timestamp: "<ISO8601>"
+severity: "INCIDENT"
+```
+
+---
+
+### Safety Policy Evaluation Timeout
+
+**Detection:** OPA evaluation takes >10ms (configured threshold)  
+**Symptoms:** Pathologically complex policy, resource exhaustion  
+**Response:**
+1. Assume policy would deny (fail secure)
+2. Return `ERR_POLICY_DENIED`
+3. Log as potential DoS or performance issue
+4. Alert operator
+
+**Recovery:**
+- Operator reviews policy bundle for performance issues
+- Policy simplified or split into multiple bundles
+- Evaluation cache tuned
+
+**Audit Log:**
+```
+event_type: "policy_evaluation_timeout"
+intent_id: "<intent_id>"
+device_id: "<target_id>"
+timeout_ms: 15
+policy_bundle_age: "3600 seconds"
+timestamp: "<ISO8601>"
+severity: "WARNING"
+```
+
+---
+
+## Replay and Signature Failures
+
+### Nonce Replay Detected
+
+**Detection:** Nonce registry lookup — nonce has been seen before  
+**Symptoms:** Same intent sent twice, delayed packet retransmitted, network MITM  
+**Response:**
+1. Return `ERR_NONCE_REPLAY`
+2. Log with full intent details (**SECURITY EVENT**)
+3. Increment device's replay attempt counter
+4. Do NOT execute
+
+**Recovery:**
+- If 5 replays in 10 minutes: Suspect MITM or malicious actor
+- Device certificate revoked automatically
+- Incident escalated to security team
+- Device must re-provision with new identity
+
+**Audit Log:**
+```
+event_type: "nonce_replay_detected"
+intent_id: "<intent_id>"
+device_id: "<target_id>"
+nonce: "<first_8_chars>"
+previous_use_timestamp: "2026-02-27T14:30:00Z"
+current_timestamp: "2026-02-27T14:31:15Z"
+replay_attempts_in_window: 1
+timestamp: "<ISO8601>"
+severity: "SECURITY_ALERT"
+```
+
+---
+
+### Signature Verification Failure
+
+**Detection:** Ed25519 signature verification fails  
+**Symptoms:** Forged signature, corrupted intent, tampered payload  
+**Response:**
+1. Return `ERR_SIGNATURE_INVALID`
+2. Log event (**SECURITY EVENT**)
+3. Do NOT execute
+4. Device certificate remains valid (device not blamed for attack)
+
+**Recovery:**
+- If 10 signature failures from same issuer in 1 hour: Suspect compromised signing key
+- Issuer key revocation initiated by operator
+- Pending intents signed with revoked key are marked in audit
+- New signing key generated and distributed
+
+**Audit Log:**
+```
+event_type: "signature_verification_failure"
+intent_id: "<intent_id>"
+device_id: "<target_id>"
+issuer_id: "planner-key-prod-001"
+signature_type: "planner"
+verification_error: "signature did not verify"
+payload_size: 1024
+timestamp: "<ISO8601>"
+severity: "SECURITY_ALERT"
+```
+
+---
+
+## Device Certificate Failures
+
+### Device Certificate Expired
+
+**Detection:** mTLS handshake failure during connection  
+**Symptoms:** Device has not renewed certificate before expiry  
+**Response:**
+1. Device cannot authenticate to Edge Service
+2. Device cannot receive commands
+3. Device status in fleet dashboard: `CERT_EXPIRED`
+4. Renewal is attempted automatically with exponential backoff
+
+**Recovery:**
+- Device initiates certificate renewal request to step-ca RA
+- renewal succeeds → Device re-authenticates
+- Renewal fails for >24 hours → Operator alert surfaced to tenant dashboard
+- Manual provision may be required
+
+**Timeline:**
+- Certificate issued with 24-72 hour lifetime
+- Renewal window opens at 50% of lifetime
+- Renewal failures trigger exponential backoff (1s, 2s, 4s, 8s, 30s, 30m)
+- If no renewal by expiry: No further commands accepted
+
+**Audit Log:**
+```
+event_type: "device_certificate_expired"
+device_id: "<target_id>"
+cert_serial: "0x123abc"
+issued_at: "2026-02-26T14:30:00Z"
+expires_at: "2026-02-27T14:30:00Z"
+renewal_attempts: 0
+last_renewal_attempt: null
+timestamp: "<ISO8601>"
+severity: "WARNING"
+```
+
+---
+
+## Execution Endpoint Failures
+
+### Execution Timeout on Device
+
+**Detection:** Device callback does not return within maximum execution time  
+**Symptoms:** Hardware hang, infinite loop, unresponsive sensor  
+**Timeout:** 100ms for GPIO/relay operations (configured per action)  
+**Response:**
+1. Firmware returns `ERR_EXECUTION_TIMEOUT`
+2. Edge Service logs failure
+3. AI Node receives failure result
+4. User is notified of timeout
+5. Device state is NOT updated (unknown whether action succeeded)
+
+**Recovery:**
+- Idempotent actions may be retried (user can say "turn on the light" again)
+- Non-idempotent actions must be manually reviewed (e.g., "unlock door" cannot be retried)
+- If pattern detected (same device timing out 10+ times), device flagged for inspection
+
+**Audit Log:**
+```
+event_type: "execution_timeout"
+intent_id: "<intent_id>"
+device_id: "<target_id>"
+action: "activate_pump"
+timeout_ms: 100
+callback_runtime_ms: null
+timestamp: "<ISO8601>"
+severity: "WARNING"
+```
+
+---
+
+### Device Execution Failure
+
+**Detection:** Device returns `ERR_EXECUTION_FAILED` with error code  
+**Symptoms:** Hardware fault, sensor offline, actuator jammed, permission denied  
+**Response:**
+1. Edge Service logs failure with error code
+2. AI Node receives failure result
+3. User is notified with device-specific error message
+4. Failure is recorded in audit log
+5. Device state cache is NOT updated (command did not execute)
+
+**Example Failure Codes (Device-Specific):**
+- `1`: Hardware fault (relay stuck)
+- `2`: Sensor offline
+- `3`: Actuator jammed
+- `4`: Permission denied (renter not authorized)
+- `5`: Resource limit exceeded
+
+**Recovery:**
+- User informed: "Living room light error: Relay stuck (code 1)"
+- Operator can see device error in fleet dashboard
+- Pattern analysis: If device_X reports code_1 repeatedly, flag for maintenance
+
+**Audit Log:**
+```
+event_type: "execution_failed"
+intent_id: "<intent_id>"
+device_id: "<target_id>"
+action: "turn_on"
+error_code: 1
+error_message: "Relay stuck - hardware fault detected"
+timestamp: "<ISO8601>"
+severity: "INFO"
+```
+
+---
+
+## Cloud Connectivity Failures
+
+### Cloud Connectivity Loss (Complete Outage)
+
+**Duration:** Minutes to hours  
+**Detection:** Edge Service heartbeat to cloud fails  
+**Response:** Automatic tier downgrade
+
+```
+Cloud available
+  ↓ [Cloud connection lost]
+  ↓
+Cloud unavailable + Local AI Node present
+  → Switch to Local AI Node mode
+  ↓ [Local AI Node available]
+  → LLM-dependent features available (7-8B model)
+  → Pre-configured automations continue
+  ↓ [Local AI Node dies or unavailable]
+  ↓
+Cloud unavailable + No Local AI Node
+  → Switch to Offline Deterministic mode
+  → LLM-dependent features unavailable
+  → Pre-configured automations continue (basic trigger-action)
+  → Manual control available
+  ↑ [Cloud reconnects]
+  ↓
+Cloud available
+  → State sync begins (replay local event log)
+  → Automatic tier upgrade to Cloud
+```
+
+**State Synchronization on Reconnection:**
+- Local event log is replayed to cloud incrementally
+- Conflicts resolved by last-write-wins per device state field
+- Idempotency keys on commands prevent duplicate execution during replay
+- User notified of any state divergence that required conflict resolution
+
+**Audit Log:**
+```
+event_type: "tier_downgrade"
+from_tier: "cloud_standard"
+to_tier: "local_ai_node"
+reason: "cloud_connection_lost"
+duration_seconds: 0
+timestamp: "<ISO8601>"
+```
+
+---
+
+## Policy Bundle Staleness
+
+### Policy Bundle TTL Expired (Safety Proxy)
+
+**Detection:** Bundle TTL check on Safety proxy  
+**Symptoms:** Cloud communication failed for extended period  
+**Response:**
+
+| Bundle Age | Policy Type | Action |
+|---|---|---|
+| Fresh | Any | Evaluate and enforce |
+| Stale (TTL+10min) | `time_sensitive` | Fail closed (deny all) |
+| Stale | `normal` | Serve cached bundle (fail open) |
+| Very stale (TTL+4h) | Any | Force cloud reconnect or fail closed |
+
+**Error Response:**
+```json
+{
+  "intent_id": "<intent_id>",
+  "status": "ERR_POLICY_DENIED",
+  "reason": "Policy bundle stale (TTL expired 45 minutes ago). Cannot authorize time_sensitive actions.",
+  "bundle_age_minutes": 75,
+  "action_policy_type": "time_sensitive"
+}
+```
+
+**Recovery:**
+- Cloud reconnects → Fresh bundle pulled
+- If cloud unavailable after 4 hours → Fail closed on all actions
+- Alert operator of stale bundle situation
+- Manual policy bundle update via USB (physical media fallback)
+
+**Audit Log:**
+```
+event_type: "policy_bundle_staleness"
+bundle_age_seconds: 4500
+ttl_seconds: 3600
+policy_type: "time_sensitive"
+action: "lock_door"
+result: "DENY"
+alert_operator: true
+timestamp: "<ISO8601>"
+severity: "CRITICAL"
+```
+
+---
+
+## Audit Log Failures
+
+### Audit Log Tamper Detection
+
+**Detection:** Hash chain verification (sequential scan from row 1)  
+**Symptoms:** Postgres corruption, malicious DBA action, database attack  
+**Response:**
+1. (**SECURITY EVENT**)
+2. Halt audit log writes immediately
+3. Alert operator immediately
+4. Flag database integrity as compromised
+5. Forensic investigation required before system can resume
+
+**Recovery:**
+- Operator investigates breached row(s)
+- Integrity assessment performed
+- Postgres forensic backup taken
+- If possible, restore from last known-good backup
+- If not possible, investigate blast radius (what data was exposed)
+- Security incident response team engaged
+
+**Audit Log (Before Tampering Detection):**
+```
+[... valid hash chain ...]
+Row 12345: hash_chain OK
+Row 12346: HASH_INVALID ← Tampering detected here
+Rows 12347+: UNVERIFIED (due to chain break)
+```
+
+---
+
+## OTA Update Failures
+
+### OTA Firmware Update Failure
+
+**Detection:** Post-boot health check failure on new firmware  
+**Symptoms:** Firmware corruption, incomplete write, hardware incompatibility  
+**Response:**
+1. Bootloader detects unhealthy firmware
+2. Automatic rollback to previous partition (dual-partition support)
+3. Device boots into previous firmware version
+4. Failure reported to fleet dashboard with error code
+5. Rollout halted for remaining devices in this group
+
+**Recovery:**
+- Engineering team investigates firmware bug
+- Root cause fixed
+- Canary group (1%) re-tests new firmware
+- If failures persist, rollout cancelled and marked as blocked
+- If failures resolve, rollout resumes at expanded (10%) group
+
+**OTA Rollout State Machine:**
+```
+Queued → Canary (1%) → Evaluation
+           ↓
+        [under 2% fail] → Expanded (10%) → Evaluation
+                        ↓
+                    [under 2% fail] → Full (100%)
+                        ↓
+                    [High fail rate] → HALT, rollback
+```
+
+**Fleet Dashboard Entry:**
+```
+Firmware Version: v2.3.1
+Rollout Status: HALTED
+Canary Result: PASSED (1%, 0 failures)
+Expanded Result: FAILED (10%, 3 failures out of 30)
+Rollback: AUTOMATIC (device 007, 012, 019 reverted to v2.3.0)
+Root Cause: Hypothesis: PSRAM initialization issue on cold boot
+Engineering: Investigating
+```
+
+---
+
+## Safety Key Compromise
+
+### Safety Key Compromise (Out-of-Band)
+
+**Detection:** Out-of-band notification (key compromise is not automatically detectable)  
+**Symptoms:** Security audit reveals leaked key, manufacturer compromise, unauthorized access  
+**Response:**
+1. Emergency key rotation initiated
+2. New Safety key generated
+3. New public key signed by previous private key (chain of trust)
+4. New key + signature distributed to all devices via OTA
+5. Devices verify signature before accepting new key
+6. Previous key revoked globally
+7. All intents signed with compromised key flagged in audit log for forensic review
+
+**Recovery:**
+- Devices successfully update → System resumes with new key
+- Devices offline → Update queued, applied on next connection
+- Compromised key data: Review all intents it countersigned, assess impact
+- Post-incident: Audit how key was compromised, improve key management
+
+**Audit Log (Emergency Rotation):**
+```
+event_type: "safety_key_rotation"
+rotation_type: "emergency"
+previous_key_id: "safety-key-prod-001"
+new_key_id: "safety-key-prod-002"
+reason: "out_of_band_compromise_report"
+rotation_timestamp: "2026-02-27T15:00:00Z"
+intents_flagged_for_review: 12847
+devices_updated: 156
+devices_pending_update: 4
+timestamp: "<ISO8601>"
+severity: "CRITICAL"
+```
+
+---
+
+## Next Steps
+
+- See [Safety Key Rotation](/security/cryptographic-model#safety-key-rotation) for cryptographic details
+- Explore [Execution Modes](/operations/execution-modes) for how the system transitions between tiers
+- Review [Audit Logging](/security/audit-logging) for forensic investigation procedures
