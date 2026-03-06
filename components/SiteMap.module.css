@@ -1,0 +1,147 @@
+.sitemap {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 2rem;
+  margin: 2rem 0;
+}
+
+.title {
+  margin: 0 0 2rem 0;
+  font-size: 1.75rem;
+  color: #1f2937;
+}
+
+.navigation {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 2rem;
+  margin-bottom: 3rem;
+}
+
+.section {
+  border-left: 3px solid #16A34A;
+  padding-left: 1.5rem;
+}
+
+.sectionTitle {
+  margin: 0 0 1rem 0;
+  font-size: 1.25rem;
+  color: #1f2937;
+  font-weight: 600;
+}
+
+.group {
+  margin-bottom: 1.5rem;
+}
+
+.groupTitle {
+  margin: 0 0 0.75rem 0;
+  font-size: 1rem;
+  color: #4b5563;
+  font-weight: 600;
+}
+
+.pageList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.pageItem {
+  margin: 0;
+}
+
+.pageLink {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem;
+  border-radius: 4px;
+  text-decoration: none;
+  transition: background-color 0.2s ease;
+}
+
+.pageLink:hover {
+  background-color: #f9fafb;
+}
+
+.pageName {
+  color: #16A34A;
+  font-weight: 500;
+}
+
+.pageLink:hover .pageName {
+  text-decoration: underline;
+}
+
+.pageDesc {
+  margin: 0.25rem 0 0 0;
+  font-size: 0.8rem;
+  color: #9ca3af;
+}
+
+.plannedBadge {
+  display: inline-block;
+  padding: 0.125rem 0.5rem;
+  background-color: #fef3c7;
+  color: #92400e;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  margin-left: auto;
+}
+
+.stats {
+  background-color: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 1.5rem;
+}
+
+.stats h3 {
+  margin: 0 0 1rem 0;
+  font-size: 1.1rem;
+  color: #1f2937;
+}
+
+.statsList {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 1.5rem;
+  margin: 0;
+}
+
+.statsList > div {
+  text-align: center;
+}
+
+.statsList dt {
+  font-size: 0.85rem;
+  color: #6b7280;
+  margin-bottom: 0.5rem;
+}
+
+.statsList dd {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #16A34A;
+}
+
+@media (max-width: 768px) {
+  .sitemap {
+    padding: 1rem;
+  }
+
+  .navigation {
+    grid-template-columns: 1fr;
+  }
+
+  .statsList {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

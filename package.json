@@ -1,0 +1,28 @@
+{
+  "name": "hestia-labs-docs",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "^16.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "ai": "^6.0.0",
+    "@ai-sdk/groq": "^0.1.0",
+    "@supabase/supabase-js": "^2.38.0",
+    "@upstash/redis": "^1.25.0",
+    "rss": "^1.2.2",
+    "zustand": "^4.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.3.0"
+  }
+}

@@ -1,0 +1,153 @@
+.docs-layout {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background-color: #f9fafb;
+}
+
+.docs-main {
+  flex: 1;
+  padding: 2rem 1rem;
+}
+
+.docs-container {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* Hero Section */
+.docs-hero {
+  text-align: center;
+  margin-bottom: 4rem;
+}
+
+.docs-title {
+  font-size: 3rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+  background: linear-gradient(135deg, #16A34A, #07C983);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.docs-subtitle {
+  font-size: 1.25rem;
+  color: #6b7280;
+  margin-bottom: 2rem;
+  max-width: 700px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Quick Navigation */
+.docs-quick-nav {
+  margin-bottom: 4rem;
+}
+
+.docs-quick-nav h2 {
+  margin-bottom: 2rem;
+}
+
+.nav-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1.5rem;
+}
+
+.nav-card {
+  padding: 1.5rem;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  transition: all 0.3s ease;
+  display: flex;
+  flex-direction: column;
+}
+
+.nav-card:hover {
+  border-color: #16A34A;
+  box-shadow: 0 4px 6px rgba(22, 163, 74, 0.1);
+  transform: translateY(-2px);
+}
+
+.nav-card h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.1rem;
+}
+
+.nav-card p {
+  color: #6b7280;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+/* Featured Section */
+.docs-featured {
+  margin-bottom: 4rem;
+}
+
+.docs-featured h2 {
+  margin-bottom: 2rem;
+}
+
+.featured-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 2rem;
+}
+
+.featured-card {
+  padding: 2rem;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  border-left: 4px solid #16A34A;
+  transition: all 0.3s ease;
+}
+
+.featured-card:hover {
+  box-shadow: 0 10px 15px rgba(0, 0, 0, 0.1);
+  transform: translateY(-4px);
+}
+
+.featured-card h3 {
+  margin-top: 0;
+  margin-bottom: 1rem;
+  font-size: 1.25rem;
+}
+
+.featured-card p {
+  color: #6b7280;
+  margin-bottom: 1.5rem;
+}
+
+.featured-link {
+  display: inline-block;
+  color: #16A34A;
+  font-weight: 600;
+  transition: transform 0.2s ease;
+}
+
+.featured-link:hover {
+  transform: translateX(4px);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .docs-title {
+    font-size: 2rem;
+  }
+
+  .docs-subtitle {
+    font-size: 1rem;
+  }
+
+  .docs-main {
+    padding: 1rem 0.5rem;
+  }
+
+  .nav-grid, .featured-grid {
+    grid-template-columns: 1fr;
+  }
+}

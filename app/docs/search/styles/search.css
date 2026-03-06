@@ -1,0 +1,135 @@
+.search-main {
+  flex: 1;
+  padding: 2rem 1rem;
+}
+
+.search-container {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.search-container h1 {
+  font-size: 2rem;
+  margin-bottom: 2rem;
+  color: #1f2937;
+}
+
+.search-info {
+  margin: 2rem 0;
+  padding: 1rem;
+  background-color: #ecfdf5;
+  border-left: 4px solid #16A34A;
+  border-radius: 6px;
+  color: #15803D;
+}
+
+.search-info p {
+  margin: 0;
+}
+
+.search-results {
+  margin: 2rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.search-result {
+  padding: 1.5rem;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+.search-result:hover {
+  border-color: #16A34A;
+  box-shadow: 0 4px 6px rgba(22, 163, 74, 0.1);
+}
+
+.result-title {
+  display: block;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #16A34A;
+  text-decoration: none;
+  margin-bottom: 0.5rem;
+  transition: color 0.2s ease;
+}
+
+.result-title:hover {
+  color: #15803D;
+  text-decoration: underline;
+}
+
+.result-description {
+  color: #6b7280;
+  margin-bottom: 1rem;
+  line-height: 1.6;
+}
+
+.result-meta {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.85rem;
+  color: #9ca3af;
+}
+
+.result-category {
+  padding: 0.25rem 0.75rem;
+  background-color: #f3f4f6;
+  border-radius: 4px;
+  text-transform: capitalize;
+}
+
+.result-status {
+  padding: 0.25rem 0.75rem;
+  border-radius: 4px;
+}
+
+.search-tips {
+  margin: 3rem 0;
+  padding: 2rem;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.search-tips h3 {
+  margin: 0 0 1rem 0;
+  font-size: 1.25rem;
+  color: #1f2937;
+}
+
+.search-tips ul {
+  margin: 0;
+  padding-left: 1.5rem;
+}
+
+.search-tips li {
+  margin-bottom: 0.75rem;
+  color: #6b7280;
+}
+
+.search-tips a {
+  color: #16A34A;
+  text-decoration: none;
+}
+
+.search-tips a:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 768px) {
+  .search-container h1 {
+    font-size: 1.5rem;
+  }
+
+  .result-title {
+    font-size: 1.1rem;
+  }
+
+  .result-meta {
+    flex-wrap: wrap;
+  }
+}
